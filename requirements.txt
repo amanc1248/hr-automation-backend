@@ -12,7 +12,7 @@ asyncpg>=0.29.0
 
 # Environment and configuration
 python-dotenv>=1.0.0
-pydantic>=2.11.5
+pydantic[email]>=2.11.5
 pydantic-settings>=2.1.0
 
 # Authentication and security
