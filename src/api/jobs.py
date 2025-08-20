@@ -1,216 +1,340 @@
 """
-Jobs API endpoints.
-Handles job creation, management, and posting to external platforms.
+Job management API endpoints.
+Handles job posting, updating, and retrieval operations.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
-from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from typing import Optional, List
+from uuid import UUID
 import logging
-from uuid import uuid4
+
+from src.models import (
+    Job, JobCreate, JobUpdate, JobSearch, JobStatus, JobType, 
+    ExperienceLevel, PaginationParams, PaginatedResponse, APIResponse
+)
+from src.config.database import get_supabase
+from src.services.portia_service import get_portia_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-security = HTTPBearer()
 
 
-class JobCreate(BaseModel):
-    title: str
-    description: str
-    requirements: List[str]
-    responsibilities: List[str]
-    location: str
-    employment_type: str  # full_time, part_time, contract, internship
-    experience_level: str  # entry, mid, senior, lead, executive
-    salary_range: Optional[dict] = None  # {min: number, max: number, currency: string}
-    benefits: List[str] = []
-    platforms: List[str] = ["linkedin"]  # Platforms to post to
-
-
-class JobResponse(BaseModel):
-    id: str
-    title: str
-    description: str
-    requirements: List[str]
-    responsibilities: List[str]
-    location: str
-    employment_type: str
-    experience_level: str
-    salary_range: Optional[dict] = None
-    benefits: List[str]
-    status: str
-    platforms: List[str]
-    external_ids: dict = {}
-    created_at: str
-    updated_at: str
-
-
-class JobList(BaseModel):
-    jobs: List[JobResponse]
-    total: int
-    page: int
-    per_page: int
-
-
-@router.post("/", response_model=JobResponse)
-async def create_job(
-    job_data: JobCreate,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-):
-    """
-    Create a new job posting.
-    
-    This will create the job in the database and optionally post it to external platforms.
-    """
-    try:
-        # TODO: Validate user permissions
-        # TODO: Create job in Supabase
-        # TODO: Trigger Portia agent to post to external platforms
-        
-        # Placeholder implementation
-        job_id = str(uuid4())
-        
-        job_response = JobResponse(
-            id=job_id,
-            title=job_data.title,
-            description=job_data.description,
-            requirements=job_data.requirements,
-            responsibilities=job_data.responsibilities,
-            location=job_data.location,
-            employment_type=job_data.employment_type,
-            experience_level=job_data.experience_level,
-            salary_range=job_data.salary_range,
-            benefits=job_data.benefits,
-            status="draft",
-            platforms=job_data.platforms,
-            external_ids={},
-            created_at="2025-01-20T00:00:00Z",
-            updated_at="2025-01-20T00:00:00Z"
-        )
-        
-        logger.info(f"Created job: {job_id}")
-        return job_response
-        
-    except Exception as e:
-        logger.error(f"Failed to create job: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create job"
-        )
-
-
-@router.get("/", response_model=JobList)
+@router.get("/", response_model=PaginatedResponse)
 async def list_jobs(
-    page: int = 1,
-    per_page: int = 10,
-    status_filter: Optional[str] = None,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    pagination: PaginationParams = Depends(),
+    search: JobSearch = Depends(),
+    supabase = Depends(get_supabase)
 ):
     """
-    List all jobs with pagination and filtering.
+    Get paginated list of jobs with optional filtering.
     """
     try:
-        # TODO: Fetch jobs from Supabase with pagination
-        # TODO: Apply status filter if provided
+        # Build query
+        query = supabase.table("jobs").select("*")
         
-        # Placeholder implementation
-        jobs = []
+        # Apply filters
+        if search.query:
+            query = query.ilike("title", f"%{search.query}%")
+        if search.location:
+            query = query.ilike("location", f"%{search.location}%")
+        if search.job_type:
+            query = query.eq("job_type", search.job_type.value)
+        if search.experience_level:
+            query = query.eq("experience_level", search.experience_level.value)
+        if search.remote_allowed is not None:
+            query = query.eq("remote_allowed", search.remote_allowed)
+        if search.company_id:
+            query = query.eq("company_id", str(search.company_id))
+        if search.status:
+            query = query.eq("status", search.status.value)
         
-        return JobList(
-            jobs=jobs,
-            total=0,
-            page=page,
-            per_page=per_page
+        # Get total count
+        count_result = query.execute()
+        total = len(count_result.data) if count_result.data else 0
+        
+        # Apply pagination
+        paginated_query = query.range(
+            pagination.offset, 
+            pagination.offset + pagination.page_size - 1
+        ).order("created_at", desc=True)
+        
+        result = paginated_query.execute()
+        
+        jobs = [Job(**job) for job in result.data] if result.data else []
+        
+        return PaginatedResponse.create(
+            items=jobs,
+            total=total,
+            page=pagination.page,
+            page_size=pagination.page_size
         )
         
     except Exception as e:
-        logger.error(f"Failed to list jobs: {e}")
+        logger.error(f"Error listing jobs: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve jobs"
         )
 
 
-@router.get("/{job_id}", response_model=JobResponse)
-async def get_job(
-    job_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+@router.post("/", response_model=APIResponse)
+async def create_job(
+    job_data: JobCreate,
+    supabase = Depends(get_supabase),
+    portia_service = Depends(get_portia_service)
 ):
     """
-    Get a specific job by ID.
+    Create a new job posting and optionally start hiring workflow.
     """
     try:
-        # TODO: Fetch job from Supabase
-        # TODO: Check user permissions
+        # Prepare job data for insertion
+        job_dict = job_data.model_dump()
+        job_dict["created_by"] = str(job_data.created_by)
+        job_dict["company_id"] = str(job_data.company_id)
         
-        # Placeholder implementation
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Job not found"
+        # Convert nested models to JSON
+        if job_data.requirements:
+            job_dict["requirements"] = [req.model_dump() for req in job_data.requirements]
+        if job_data.salary_range:
+            job_dict["salary_range"] = job_data.salary_range.model_dump()
+        
+        # Insert job into database
+        result = supabase.table("jobs").insert(job_dict).execute()
+        
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to create job"
+            )
+        
+        created_job = Job(**result.data[0])
+        
+        # Start hiring workflow if auto-posting is enabled
+        if job_data.posted_platforms:
+            try:
+                workflow_result = await portia_service.create_hiring_workflow(
+                    job_data=job_dict,
+                    hr_user_id=str(job_data.created_by)
+                )
+                logger.info(f"Started hiring workflow: {workflow_result}")
+            except Exception as workflow_error:
+                logger.warning(f"Failed to start workflow: {workflow_error}")
+        
+        return APIResponse.success_response(
+            message="Job created successfully",
+            data={"job": created_job.model_dump()}
         )
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get job {job_id}: {e}")
+        logger.error(f"Error creating job: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create job"
+        )
+
+
+@router.get("/{job_id}", response_model=Job)
+async def get_job(
+    job_id: UUID,
+    supabase = Depends(get_supabase)
+):
+    """
+    Get a specific job by ID.
+    """
+    try:
+        result = supabase.table("jobs").select("*").eq("id", str(job_id)).execute()
+        
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Job not found"
+            )
+        
+        # Increment view count
+        supabase.table("jobs").update({
+            "views_count": result.data[0]["views_count"] + 1
+        }).eq("id", str(job_id)).execute()
+        
+        return Job(**result.data[0])
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving job {job_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve job"
         )
 
 
-@router.post("/{job_id}/publish")
-async def publish_job(
-    job_id: str,
-    platforms: List[str],
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+@router.put("/{job_id}", response_model=APIResponse)
+async def update_job(
+    job_id: UUID,
+    job_update: JobUpdate,
+    supabase = Depends(get_supabase)
 ):
     """
-    Publish job to external platforms using Portia agents.
+    Update a job posting.
     """
     try:
-        # TODO: Trigger Portia JobManagementAgent to post job
-        # TODO: Update job status and external_ids
+        # Prepare update data
+        update_data = job_update.model_dump(exclude_unset=True)
         
-        logger.info(f"Publishing job {job_id} to platforms: {platforms}")
+        # Convert nested models to JSON
+        if "requirements" in update_data and update_data["requirements"]:
+            update_data["requirements"] = [req.model_dump() for req in update_data["requirements"]]
+        if "salary_range" in update_data and update_data["salary_range"]:
+            update_data["salary_range"] = update_data["salary_range"].model_dump()
         
-        return {
-            "message": "Job publishing initiated",
-            "job_id": job_id,
-            "platforms": platforms,
-            "status": "in_progress"
-        }
+        # Update job in database
+        result = supabase.table("jobs").update(update_data).eq("id", str(job_id)).execute()
         
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Job not found"
+            )
+        
+        updated_job = Job(**result.data[0])
+        
+        return APIResponse.success_response(
+            message="Job updated successfully",
+            data={"job": updated_job.model_dump()}
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to publish job {job_id}: {e}")
+        logger.error(f"Error updating job {job_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update job"
+        )
+
+
+@router.delete("/{job_id}", response_model=APIResponse)
+async def delete_job(
+    job_id: UUID,
+    supabase = Depends(get_supabase)
+):
+    """
+    Delete a job posting.
+    """
+    try:
+        result = supabase.table("jobs").delete().eq("id", str(job_id)).execute()
+        
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Job not found"
+            )
+        
+        return APIResponse.success_response(
+            message="Job deleted successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting job {job_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete job"
+        )
+
+
+@router.post("/{job_id}/publish", response_model=APIResponse)
+async def publish_job(
+    job_id: UUID,
+    platforms: List[str] = Query(..., description="Platforms to publish to"),
+    supabase = Depends(get_supabase),
+    portia_service = Depends(get_portia_service)
+):
+    """
+    Publish job to specified platforms using AI automation.
+    """
+    try:
+        # Get job details
+        job_result = supabase.table("jobs").select("*").eq("id", str(job_id)).execute()
+        
+        if not job_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Job not found"
+            )
+        
+        job_data = job_result.data[0]
+        
+        # Update job status and platforms
+        update_result = supabase.table("jobs").update({
+            "status": "published",
+            "posted_platforms": platforms
+        }).eq("id", str(job_id)).execute()
+        
+        # Start job posting workflow
+        workflow_result = await portia_service.create_hiring_workflow(
+            job_data={**job_data, "posted_platforms": platforms},
+            hr_user_id=job_data["created_by"]
+        )
+        
+        return APIResponse.success_response(
+            message="Job published successfully",
+            data={
+                "job_id": str(job_id),
+                "platforms": platforms,
+                "workflow_id": workflow_result.get("plan_run_id")
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error publishing job {job_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to publish job"
         )
 
 
-@router.get("/{job_id}/applications")
+@router.get("/{job_id}/applications", response_model=PaginatedResponse)
 async def get_job_applications(
-    job_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    job_id: UUID,
+    pagination: PaginationParams = Depends(),
+    supabase = Depends(get_supabase)
 ):
     """
     Get all applications for a specific job.
     """
     try:
-        # TODO: Fetch applications from Supabase
-        # TODO: Include candidate information
+        # Get applications with candidate information
+        query = supabase.table("applications").select(
+            "*, candidates(*)"
+        ).eq("job_id", str(job_id))
         
-        return {
-            "job_id": job_id,
-            "applications": [],
-            "total": 0
-        }
+        # Get total count
+        count_result = query.execute()
+        total = len(count_result.data) if count_result.data else 0
+        
+        # Apply pagination
+        paginated_query = query.range(
+            pagination.offset,
+            pagination.offset + pagination.page_size - 1
+        ).order("application_date", desc=True)
+        
+        result = paginated_query.execute()
+        
+        return PaginatedResponse.create(
+            items=result.data or [],
+            total=total,
+            page=pagination.page,
+            page_size=pagination.page_size
+        )
         
     except Exception as e:
-        logger.error(f"Failed to get applications for job {job_id}: {e}")
+        logger.error(f"Error retrieving applications for job {job_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve applications"
+            detail="Failed to retrieve job applications"
         )

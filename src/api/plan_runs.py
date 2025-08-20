@@ -1,265 +1,414 @@
 """
-Plan Runs API endpoints.
-Handles Portia plan run management, monitoring, and clarifications.
+Workflow (Plan Runs) API endpoints.
+Handles Portia workflow execution, monitoring, and clarifications.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
+from uuid import UUID
 import logging
+
+from src.models import (
+    Workflow, WorkflowCreate, WorkflowUpdate, WorkflowSearch,
+    WorkflowStatus, WorkflowType, ClarificationResponse,
+    PaginationParams, PaginatedResponse, APIResponse
+)
+from src.config.database import get_supabase
+from src.services.portia_service import get_portia_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-security = HTTPBearer()
 
 
-class PlanRunCreate(BaseModel):
-    query: str
-    job_id: Optional[str] = None
-    candidate_id: Optional[str] = None
-    workflow_type: str  # job_posting, candidate_screening, interview_coordination, etc.
-    inputs: Dict[str, Any] = {}
-
-
-class ClarificationResponse(BaseModel):
-    id: str
-    category: str
-    user_guidance: str
-    argument_name: Optional[str] = None
-    options: Optional[List[str]] = None
-    resolved: bool = False
-
-
-class PlanRunResponse(BaseModel):
-    id: str
-    query: str
-    status: str  # NOT_STARTED, IN_PROGRESS, NEED_CLARIFICATION, COMPLETE, FAILED
-    current_step_index: int
-    workflow_type: str
-    job_id: Optional[str] = None
-    candidate_id: Optional[str] = None
-    step_outputs: Dict[str, Any] = {}
-    final_output: Optional[Any] = None
-    clarifications: List[ClarificationResponse] = []
-    error_message: Optional[str] = None
-    created_at: str
-    updated_at: str
-
-
-class PlanRunList(BaseModel):
-    plan_runs: List[PlanRunResponse]
-    total: int
-    page: int
-    per_page: int
-
-
-class ClarificationResolve(BaseModel):
-    clarification_id: str
-    response: Any
-
-
-@router.post("/", response_model=PlanRunResponse)
-async def create_plan_run(
-    plan_data: PlanRunCreate,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+@router.get("/", response_model=PaginatedResponse)
+async def list_workflows(
+    pagination: PaginationParams = Depends(),
+    search: WorkflowSearch = Depends(),
+    supabase = Depends(get_supabase)
 ):
     """
-    Create and start a new Portia plan run.
+    Get paginated list of workflows with optional filtering.
     """
     try:
-        # TODO: Get Portia service
-        # TODO: Create plan run with query and inputs
-        # TODO: Store plan run in database
+        # Build query
+        query = supabase.table("workflows").select("*")
         
-        logger.info(f"Creating plan run for workflow: {plan_data.workflow_type}")
+        # Apply filters
+        if search.workflow_type:
+            query = query.eq("workflow_type", search.workflow_type.value)
+        if search.status:
+            query = query.eq("status", search.status.value)
+        if search.entity_id:
+            query = query.eq("entity_id", str(search.entity_id))
+        if search.entity_type:
+            query = query.eq("entity_type", search.entity_type.value)
+        if search.created_by:
+            query = query.eq("created_by", str(search.created_by))
+        if search.assigned_to:
+            query = query.eq("assigned_to", str(search.assigned_to))
+        if search.has_clarifications:
+            if search.has_clarifications:
+                query = query.neq("clarifications", "[]")
+            else:
+                query = query.eq("clarifications", "[]")
+        if search.created_from:
+            query = query.gte("created_at", search.created_from)
+        if search.created_to:
+            query = query.lte("created_at", search.created_to)
         
-        # Placeholder implementation
+        # Get total count
+        count_result = query.execute()
+        total = len(count_result.data) if count_result.data else 0
+        
+        # Apply pagination
+        paginated_query = query.range(
+            pagination.offset,
+            pagination.offset + pagination.page_size - 1
+        ).order("created_at", desc=True)
+        
+        result = paginated_query.execute()
+        
+        workflows = [Workflow(**workflow) for workflow in result.data] if result.data else []
+        
+        return PaginatedResponse.create(
+            items=workflows,
+            total=total,
+            page=pagination.page,
+            page_size=pagination.page_size
+        )
+        
+    except Exception as e:
+        logger.error(f"Error listing workflows: {e}")
         raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Plan run creation not yet implemented"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve workflows"
+        )
+
+
+@router.post("/", response_model=APIResponse)
+async def create_workflow(
+    workflow_data: WorkflowCreate,
+    supabase = Depends(get_supabase),
+    portia_service = Depends(get_portia_service)
+):
+    """
+    Create and start a new workflow using Portia.
+    """
+    try:
+        # Prepare workflow data
+        workflow_dict = workflow_data.model_dump()
+        workflow_dict["created_by"] = str(workflow_data.created_by)
+        
+        if workflow_data.entity_id:
+            workflow_dict["entity_id"] = str(workflow_data.entity_id)
+        if workflow_data.assigned_to:
+            workflow_dict["assigned_to"] = str(workflow_data.assigned_to)
+        
+        # Start Portia workflow based on type
+        portia_result = None
+        if workflow_data.workflow_type == WorkflowType.HIRING_PROCESS:
+            portia_result = await portia_service.create_hiring_workflow(
+                job_data=workflow_data.inputs,
+                hr_user_id=str(workflow_data.created_by)
+            )
+        elif workflow_data.workflow_type == WorkflowType.CANDIDATE_SCREENING:
+            portia_result = await portia_service.screen_candidate(
+                candidate_data=workflow_data.inputs.get("candidate_data", {}),
+                job_data=workflow_data.inputs.get("job_data", {})
+            )
+        elif workflow_data.workflow_type == WorkflowType.INTERVIEW_SCHEDULING:
+            portia_result = await portia_service.schedule_interview(
+                interview_data=workflow_data.inputs
+            )
+        elif workflow_data.workflow_type == WorkflowType.AI_INTERVIEW:
+            portia_result = await portia_service.conduct_ai_interview(
+                interview_data=workflow_data.inputs
+            )
+        
+        # Add Portia plan run ID if available
+        if portia_result and portia_result.get("plan_run_id"):
+            workflow_dict["plan_run_id"] = portia_result["plan_run_id"]
+            workflow_dict["status"] = "running"
+        
+        # Insert workflow into database
+        result = supabase.table("workflows").insert(workflow_dict).execute()
+        
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to create workflow"
+            )
+        
+        created_workflow = Workflow(**result.data[0])
+        
+        return APIResponse.success_response(
+            message="Workflow created and started successfully",
+            data={
+                "workflow": created_workflow.model_dump(),
+                "portia_result": portia_result
+            }
         )
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to create plan run: {e}")
+        logger.error(f"Error creating workflow: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create plan run"
+            detail="Failed to create workflow"
         )
 
 
-@router.get("/", response_model=PlanRunList)
-async def list_plan_runs(
-    page: int = 1,
-    per_page: int = 10,
-    status_filter: Optional[str] = None,
-    workflow_type: Optional[str] = None,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+@router.get("/{workflow_id}", response_model=Workflow)
+async def get_workflow(
+    workflow_id: UUID,
+    supabase = Depends(get_supabase),
+    portia_service = Depends(get_portia_service)
 ):
     """
-    List all plan runs with pagination and filtering.
+    Get a specific workflow by ID with current status.
     """
     try:
-        # TODO: Fetch plan runs from database
-        # TODO: Apply filters
+        result = supabase.table("workflows").select("*").eq("id", str(workflow_id)).execute()
         
-        # Placeholder implementation
-        plan_runs = []
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Workflow not found"
+            )
         
-        return PlanRunList(
-            plan_runs=plan_runs,
-            total=0,
-            page=page,
-            per_page=per_page
-        )
+        workflow_data = result.data[0]
         
+        # Get current status from Portia if plan_run_id exists
+        if workflow_data.get("plan_run_id"):
+            try:
+                portia_status = portia_service.get_plan_run_status(workflow_data["plan_run_id"])
+                if portia_status.get("success"):
+                    # Update workflow with current Portia status
+                    workflow_data.update({
+                        "status": portia_status.get("status", workflow_data["status"]),
+                        "current_step_index": portia_status.get("current_step", 0),
+                        "outputs": portia_status.get("outputs", {}),
+                        "clarifications": portia_status.get("clarifications", [])
+                    })
+            except Exception as portia_error:
+                logger.warning(f"Failed to get Portia status: {portia_error}")
+        
+        return Workflow(**workflow_data)
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to list plan runs: {e}")
+        logger.error(f"Error retrieving workflow {workflow_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve plan runs"
+            detail="Failed to retrieve workflow"
         )
 
 
-@router.get("/{plan_run_id}", response_model=PlanRunResponse)
-async def get_plan_run(
-    plan_run_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+@router.put("/{workflow_id}", response_model=APIResponse)
+async def update_workflow(
+    workflow_id: UUID,
+    workflow_update: WorkflowUpdate,
+    supabase = Depends(get_supabase)
 ):
     """
-    Get a specific plan run by ID with current status and outputs.
+    Update a workflow.
     """
     try:
-        # TODO: Fetch plan run from Portia storage
-        # TODO: Get current status and outputs
+        # Prepare update data
+        update_data = workflow_update.model_dump(exclude_unset=True)
         
-        # Placeholder implementation
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Plan run not found"
+        if "assigned_to" in update_data and update_data["assigned_to"]:
+            update_data["assigned_to"] = str(update_data["assigned_to"])
+        
+        # Update workflow in database
+        result = supabase.table("workflows").update(update_data).eq("id", str(workflow_id)).execute()
+        
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Workflow not found"
+            )
+        
+        updated_workflow = Workflow(**result.data[0])
+        
+        return APIResponse.success_response(
+            message="Workflow updated successfully",
+            data={"workflow": updated_workflow.model_dump()}
         )
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get plan run {plan_run_id}: {e}")
+        logger.error(f"Error updating workflow {workflow_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve plan run"
+            detail="Failed to update workflow"
         )
 
 
-@router.post("/{plan_run_id}/resolve-clarification")
-async def resolve_clarification(
-    plan_run_id: str,
-    clarification_data: ClarificationResolve,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+@router.post("/{workflow_id}/clarifications/{clarification_id}/respond", response_model=APIResponse)
+async def respond_to_clarification(
+    workflow_id: UUID,
+    clarification_id: str,
+    response_data: ClarificationResponse,
+    supabase = Depends(get_supabase),
+    portia_service = Depends(get_portia_service)
 ):
     """
-    Resolve a clarification and resume plan run execution.
-    This is crucial for human-in-the-loop workflows.
+    Respond to a workflow clarification and resume execution.
     """
     try:
-        # TODO: Get Portia service
-        # TODO: Resolve clarification
-        # TODO: Resume plan run
+        # Get workflow
+        workflow_result = supabase.table("workflows").select("*").eq("id", str(workflow_id)).execute()
         
-        logger.info(f"Resolving clarification {clarification_data.clarification_id} for plan run {plan_run_id}")
+        if not workflow_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Workflow not found"
+            )
         
-        return {
-            "message": "Clarification resolved",
-            "plan_run_id": plan_run_id,
-            "clarification_id": clarification_data.clarification_id,
-            "status": "resumed"
-        }
+        workflow_data = workflow_result.data[0]
         
+        # Submit clarification response to Portia
+        if workflow_data.get("plan_run_id"):
+            portia_result = portia_service.resolve_clarification(
+                plan_run_id=workflow_data["plan_run_id"],
+                clarification_id=clarification_id,
+                response=response_data.response
+            )
+            
+            if not portia_result.get("success"):
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to submit clarification response to Portia"
+                )
+        
+        # Update workflow status
+        supabase.table("workflows").update({
+            "status": "running"
+        }).eq("id", str(workflow_id)).execute()
+        
+        return APIResponse.success_response(
+            message="Clarification response submitted and workflow resumed",
+            data={
+                "workflow_id": str(workflow_id),
+                "clarification_id": clarification_id,
+                "response": response_data.response
+            }
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to resolve clarification: {e}")
+        logger.error(f"Error responding to clarification: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to resolve clarification"
+            detail="Failed to respond to clarification"
         )
 
 
-@router.post("/{plan_run_id}/pause")
-async def pause_plan_run(
-    plan_run_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+@router.post("/{workflow_id}/pause", response_model=APIResponse)
+async def pause_workflow(
+    workflow_id: UUID,
+    supabase = Depends(get_supabase)
 ):
     """
-    Pause a running plan run.
+    Pause a running workflow.
     """
     try:
-        # TODO: Pause plan run execution
-        
-        logger.info(f"Pausing plan run {plan_run_id}")
-        
-        return {
-            "message": "Plan run paused",
-            "plan_run_id": plan_run_id,
+        # Update workflow status
+        result = supabase.table("workflows").update({
             "status": "paused"
-        }
+        }).eq("id", str(workflow_id)).execute()
         
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Workflow not found"
+            )
+        
+        return APIResponse.success_response(
+            message="Workflow paused successfully",
+            data={"workflow_id": str(workflow_id)}
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to pause plan run {plan_run_id}: {e}")
+        logger.error(f"Error pausing workflow {workflow_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to pause plan run"
+            detail="Failed to pause workflow"
         )
 
 
-@router.post("/{plan_run_id}/resume")
-async def resume_plan_run(
-    plan_run_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+@router.post("/{workflow_id}/resume", response_model=APIResponse)
+async def resume_workflow(
+    workflow_id: UUID,
+    supabase = Depends(get_supabase)
 ):
     """
-    Resume a paused plan run.
+    Resume a paused workflow.
     """
     try:
-        # TODO: Resume plan run execution
+        # Update workflow status
+        result = supabase.table("workflows").update({
+            "status": "running"
+        }).eq("id", str(workflow_id)).execute()
         
-        logger.info(f"Resuming plan run {plan_run_id}")
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Workflow not found"
+            )
         
-        return {
-            "message": "Plan run resumed",
-            "plan_run_id": plan_run_id,
-            "status": "resumed"
-        }
+        return APIResponse.success_response(
+            message="Workflow resumed successfully",
+            data={"workflow_id": str(workflow_id)}
+        )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to resume plan run {plan_run_id}: {e}")
+        logger.error(f"Error resuming workflow {workflow_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to resume plan run"
+            detail="Failed to resume workflow"
         )
 
 
-@router.delete("/{plan_run_id}")
-async def cancel_plan_run(
-    plan_run_id: str,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+@router.delete("/{workflow_id}", response_model=APIResponse)
+async def cancel_workflow(
+    workflow_id: UUID,
+    supabase = Depends(get_supabase)
 ):
     """
-    Cancel a plan run.
+    Cancel a workflow.
     """
     try:
-        # TODO: Cancel plan run execution
-        # TODO: Clean up resources
-        
-        logger.info(f"Cancelling plan run {plan_run_id}")
-        
-        return {
-            "message": "Plan run cancelled",
-            "plan_run_id": plan_run_id,
+        # Update workflow status
+        result = supabase.table("workflows").update({
             "status": "cancelled"
-        }
+        }).eq("id", str(workflow_id)).execute()
         
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Workflow not found"
+            )
+        
+        return APIResponse.success_response(
+            message="Workflow cancelled successfully",
+            data={"workflow_id": str(workflow_id)}
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to cancel plan run {plan_run_id}: {e}")
+        logger.error(f"Error cancelling workflow {workflow_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to cancel plan run"
+            detail="Failed to cancel workflow"
         )
