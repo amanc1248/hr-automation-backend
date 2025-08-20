@@ -1,0 +1,38 @@
+# FastAPI and web framework
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+
+# Portia AI SDK
+portia-sdk-python[all]>=0.6.2
+
+# Database and ORM
+supabase>=2.3.0
+asyncpg>=0.29.0
+
+# Environment and configuration
+python-dotenv>=1.0.0
+pydantic>=2.11.5
+pydantic-settings>=2.1.0
+
+# Authentication and security
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
+# HTTP client for external APIs
+httpx>=0.25.2
+aiohttp>=3.9.1
+
+# Utilities
+python-dateutil>=2.8.2
+pytz>=2023.3
+
+# Development dependencies
+pytest>=7.4.3
+pytest-asyncio>=0.21.1
+black>=23.11.0
+flake8>=6.1.0
+mypy>=1.7.1
+
+# Logging and monitoring
+structlog>=23.2.0
