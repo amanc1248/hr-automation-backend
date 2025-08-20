@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = Field(default="", description="Anthropic API key")
     GOOGLE_API_KEY: str = Field(default="", description="Google GenAI API key")
     
+    # LinkedIn Configuration
+    LINKEDIN_CLIENT_ID: str = Field(default="", description="LinkedIn API Client ID")
+    LINKEDIN_CLIENT_SECRET: str = Field(default="", description="LinkedIn API Client Secret")
+    LINKEDIN_ACCESS_TOKEN: str = Field(default="", description="LinkedIn API Access Token")
+    
     # FastAPI Configuration
     SECRET_KEY: str = Field(default="development_secret_key_change_in_production", description="Secret key for JWT tokens")
     ALGORITHM: str = Field(default="HS256", description="JWT algorithm")

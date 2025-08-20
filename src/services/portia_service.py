@@ -13,6 +13,19 @@ from functools import lru_cache
 from pydantic import SecretStr
 
 from src.config.settings import get_settings
+from src.tools import (
+    LinkedInJobPostingTool,
+    LinkedInApplicationCollectorTool,
+    ResumeScreeningTool,
+    SkillsAnalysisTool,
+    InterviewSchedulingTool,
+    AIInterviewTool,
+    EmailNotificationTool,
+    CommunicationTool,
+    EmailMonitoringTool,
+    ResumeProcessingTool,
+    CandidateNotificationTool
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +68,26 @@ class PortiaService:
                 if "placeholder" not in self.settings.GOOGLE_API_KEY.lower():
                     config.google_api_key = SecretStr(self.settings.GOOGLE_API_KEY)
             
-            # Create tool registry
+            # Create tool registry with custom hiring tools
             tool_registry = DefaultToolRegistry(config)
-            # TODO: Add custom hiring tools here
+            
+            # Add custom hiring tools
+            custom_tools = [
+                LinkedInJobPostingTool(),
+                LinkedInApplicationCollectorTool(),
+                ResumeScreeningTool(),
+                SkillsAnalysisTool(),
+                InterviewSchedulingTool(),
+                AIInterviewTool(),
+                EmailNotificationTool(),
+                CommunicationTool(),
+                EmailMonitoringTool(),
+                ResumeProcessingTool(),
+                CandidateNotificationTool()
+            ]
+            
+            # Combine default and custom tools
+            tool_registry = tool_registry + custom_tools
             
             # Create execution hooks for human-in-the-loop
             execution_hooks = CLIExecutionHooks(
