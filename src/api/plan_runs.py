@@ -3,7 +3,7 @@ Workflow (Plan Runs) API endpoints.
 Handles Portia workflow execution, monitoring, and clarifications.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 import logging
@@ -11,7 +11,9 @@ import logging
 from src.models import (
     Workflow, WorkflowCreate, WorkflowUpdate, WorkflowSearch,
     WorkflowStatus, WorkflowType, ClarificationResponse,
-    PaginationParams, PaginatedResponse, APIResponse
+    PaginationParams, PaginatedResponse, APIResponse,
+    PlanRunCreate, PlanRunUpdate, PlanRunResponse, 
+    ClarificationResponse, PlanRunListResponse
 )
 from src.config.database import get_supabase
 from src.services.portia_service import get_portia_service
@@ -412,3 +414,192 @@ async def cancel_workflow(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to cancel workflow"
         )
+
+
+@router.post("/", response_model=PlanRunResponse)
+async def create_plan_run(plan_run: PlanRunCreate):
+    """Create a new Portia plan run"""
+    try:
+        portia_service = get_portia_service()
+        result = await portia_service.create_hiring_workflow(
+            job_data=plan_run.job_data,
+            hr_user_id=plan_run.hr_user_id
+        )
+        
+        if result["success"]:
+            return PlanRunResponse(
+                id=result["plan_run_id"],
+                status=result["status"],
+                workflow_type=result["workflow_type"],
+                job_title=result["job_title"],
+                created_at=result["created_at"]
+            )
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create plan run: {str(e)}")
+
+@router.post("/email-processing", response_model=PlanRunResponse)
+async def process_email_applications(
+    hr_email: str = Query(..., description="HR email address to monitor"),
+    job_keywords: Optional[List[str]] = Query(None, description="Keywords to search for in emails")
+):
+    """Process job applications from HR email using Portia's Gmail tools"""
+    try:
+        portia_service = get_portia_service()
+        result = await portia_service.process_email_applications(
+            hr_email=hr_email,
+            job_keywords=job_keywords
+        )
+        
+        if result["success"]:
+            return PlanRunResponse(
+                id=result["plan_run_id"],
+                status=result["status"],
+                workflow_type="email_processing",
+                email_monitored=result["email_monitored"],
+                keywords_used=result["keywords_used"],
+                created_at=result["created_at"]
+            )
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process email applications: {str(e)}")
+
+@router.post("/schedule-interview", response_model=PlanRunResponse)
+async def schedule_interview(
+    candidate_data: Dict[str, Any],
+    interview_type: str = Query("technical", description="Type of interview")
+):
+    """Schedule interview using Portia's Google Calendar tools"""
+    try:
+        portia_service = get_portia_service()
+        result = await portia_service.schedule_interview(
+            candidate_data=candidate_data,
+            interview_type=interview_type
+        )
+        
+        if result["success"]:
+            return PlanRunResponse(
+                id=result["plan_run_id"],
+                status=result["status"],
+                workflow_type="interview_scheduling",
+                candidate_name=result["candidate_name"],
+                interview_type=result["interview_type"],
+                scheduled_at=result["scheduled_at"]
+            )
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to schedule interview: {str(e)}")
+
+@router.get("/", response_model=PlanRunListResponse)
+async def list_plan_runs(
+    pagination: PaginationParams = Depends(),
+    status: Optional[str] = Query(None, description="Filter by status"),
+    workflow_type: Optional[str] = Query(None, description="Filter by workflow type")
+):
+    """List all Portia plan runs with optional filtering"""
+    try:
+        portia_service = get_portia_service()
+        # TODO: Implement plan run listing from Portia storage
+        # For now, return mock data
+        mock_runs = [
+            {
+                "id": "mock_run_1",
+                "status": "completed",
+                "workflow_type": "hiring_automation",
+                "job_title": "Senior Software Engineer",
+                "created_at": "2025-08-20T19:00:00Z"
+            }
+        ]
+        
+        return PlanRunListResponse(
+            items=mock_runs,
+            total=len(mock_runs),
+            page=pagination.page,
+            size=pagination.size
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list plan runs: {str(e)}")
+
+@router.get("/{plan_run_id}", response_model=PlanRunResponse)
+async def get_plan_run(plan_run_id: str):
+    """Get a specific Portia plan run by ID"""
+    try:
+        portia_service = get_portia_service()
+        # TODO: Implement plan run retrieval from Portia storage
+        # For now, return mock data
+        mock_run = {
+            "id": plan_run_id,
+            "status": "in_progress",
+            "workflow_type": "hiring_automation",
+            "job_title": "Senior Software Engineer",
+            "created_at": "2025-08-20T19:00:00Z"
+        }
+        
+        return PlanRunResponse(**mock_run)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get plan run: {str(e)}")
+
+@router.post("/plan-runs/{plan_run_id}/resolve-clarification", response_model=Dict[str, Any])
+async def resolve_clarification(
+    plan_run_id: str,
+    clarification: ClarificationResponse
+):
+    """Resolve a clarification for a plan run"""
+    try:
+        portia_service = get_portia_service()
+        # TODO: Implement clarification resolution
+        return {
+            "success": True,
+            "message": f"Clarification resolved for plan run {plan_run_id}",
+            "plan_run_id": plan_run_id
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to resolve clarification: {str(e)}")
+
+@router.post("/plan-runs/{plan_run_id}/pause")
+async def pause_plan_run(plan_run_id: str):
+    """Pause a plan run"""
+    try:
+        # TODO: Implement plan run pausing
+        return {
+            "success": True,
+            "message": f"Plan run {plan_run_id} paused successfully"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to pause plan run: {str(e)}")
+
+@router.post("/plan-runs/{plan_run_id}/resume")
+async def resume_plan_run(plan_run_id: str):
+    """Resume a paused plan run"""
+    try:
+        # TODO: Implement plan run resuming
+        return {
+            "success": True,
+            "message": f"Plan run {plan_run_id} resumed successfully"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to resume plan run: {str(e)}")
+
+@router.post("/plan-runs/{plan_run_id}/cancel")
+async def cancel_plan_run(plan_run_id: str):
+    """Cancel a plan run"""
+    try:
+        # TODO: Implement plan run cancellation
+        return {
+            "success": True,
+            "message": f"Plan run {plan_run_id} cancelled successfully"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to cancel plan run: {str(e)}")

@@ -6,7 +6,9 @@ Provides specialized tools for job posting, candidate screening, and interview m
 from .linkedin_tools import LinkedInJobPostingTool, LinkedInApplicationCollectorTool
 from .resume_tools import ResumeScreeningTool, SkillsAnalysisTool
 from .interview_tools import InterviewSchedulingTool, AIInterviewTool
-from .email_tools import EmailNotificationTool, CommunicationTool, EmailMonitoringTool, ResumeProcessingTool, CandidateNotificationTool
+from .linkedin_tools import LinkedInJobPostingTool, LinkedInApplicationCollectorTool
+from .resume_tools import ResumeScreeningTool, SkillsAnalysisTool
+from .interview_tools import InterviewSchedulingTool, AIInterviewTool
 
 __all__ = [
     # LinkedIn Integration
@@ -20,11 +22,4 @@ __all__ = [
     # Interview Management
     "InterviewSchedulingTool",
     "AIInterviewTool",
-    
-    # Communication & Email Processing
-    "EmailNotificationTool",
-    "CommunicationTool",
-    "EmailMonitoringTool",
-    "ResumeProcessingTool", 
-    "CandidateNotificationTool",
 ]

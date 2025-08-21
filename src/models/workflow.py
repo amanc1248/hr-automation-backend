@@ -2,11 +2,12 @@
 Workflow models for HR Automation System (Portia integration).
 """
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 from enum import Enum
 from uuid import UUID
 from decimal import Decimal
+from datetime import datetime
 
 from .base import BaseEntity, BaseCreate, BaseUpdate
 
@@ -14,8 +15,10 @@ from .base import BaseEntity, BaseCreate, BaseUpdate
 class WorkflowType(str, Enum):
     """Workflow type enumeration"""
     HIRING_PROCESS = "hiring_process"
-    CANDIDATE_SCREENING = "candidate_screening"
+    HIRING_AUTOMATION = "hiring_automation"
+    EMAIL_PROCESSING = "email_processing"
     INTERVIEW_SCHEDULING = "interview_scheduling"
+    CANDIDATE_SCREENING = "candidate_screening"
     AI_INTERVIEW = "ai_interview"
     ASSESSMENT_CREATION = "assessment_creation"
     OFFER_GENERATION = "offer_generation"
@@ -302,3 +305,45 @@ class ClarificationResponse(BaseCreate):
             }
         }
     }
+
+
+class PlanRunCreate(BaseModel):
+    """Model for creating a new plan run"""
+    job_data: Dict[str, Any] = Field(..., description="Job information and requirements")
+    hr_user_id: str = Field(..., description="HR user ID for end user context")
+    workflow_type: Optional[WorkflowType] = Field(WorkflowType.HIRING_AUTOMATION, description="Type of workflow to create")
+
+class PlanRunUpdate(BaseModel):
+    """Model for updating a plan run"""
+    status: Optional[WorkflowStatus] = Field(None, description="New status for the plan run")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata for the plan run")
+
+class PlanRunResponse(BaseModel):
+    """Model for plan run responses"""
+    id: str = Field(..., description="Plan run ID")
+    status: str = Field(..., description="Current status of the plan run")
+    workflow_type: str = Field(..., description="Type of workflow")
+    job_title: Optional[str] = Field(None, description="Job title for hiring workflows")
+    email_monitored: Optional[str] = Field(None, description="Email address being monitored")
+    keywords_used: Optional[List[str]] = Field(None, description="Keywords used for email search")
+    candidate_name: Optional[str] = Field(None, description="Candidate name for interview workflows")
+    interview_type: Optional[str] = Field(None, description="Type of interview being scheduled")
+    scheduled_at: Optional[str] = Field(None, description="When the interview was scheduled")
+    created_at: Optional[str] = Field(None, description="When the plan run was created")
+    updated_at: Optional[str] = Field(None, description="When the plan run was last updated")
+
+class PlanRunListResponse(BaseModel):
+    """Model for listing plan runs"""
+    items: List[PlanRunResponse] = Field(..., description="List of plan runs")
+    total: int = Field(..., description="Total number of plan runs")
+    page: int = Field(..., description="Current page number")
+    size: int = Field(..., description="Page size")
+
+class WorkflowMetrics(BaseModel):
+    """Model for workflow metrics"""
+    total_workflows: int = Field(..., description="Total number of workflows")
+    active_workflows: int = Field(..., description="Number of active workflows")
+    completed_workflows: int = Field(..., description="Number of completed workflows")
+    failed_workflows: int = Field(..., description="Number of failed workflows")
+    average_completion_time: Optional[Decimal] = Field(None, description="Average time to complete workflows")
+    success_rate: Optional[Decimal] = Field(None, description="Success rate of workflows")

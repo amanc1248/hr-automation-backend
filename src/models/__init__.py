@@ -11,7 +11,11 @@ from .candidate import Candidate, CandidateCreate, CandidateUpdate, CandidateSou
 from .application import Application, ApplicationCreate, ApplicationUpdate, ApplicationStatus, ApplicationPriority, AIScreeningResult, ApplicationSearch, ApplicationStats
 from .interview import Interview, InterviewCreate, InterviewUpdate, InterviewType, InterviewStatus, InterviewMode, AIInterviewConfig, InterviewFeedback, InterviewSearch
 from .assessment import Assessment, AssessmentCreate, AssessmentUpdate, AssessmentType, AssessmentStatus, AssessmentQuestion, CandidateResponse, AIEvaluation, AssessmentSearch
-from .workflow import Workflow, WorkflowCreate, WorkflowUpdate, WorkflowStatus, WorkflowType, WorkflowStep, Clarification, ClarificationResponse, WorkflowSearch
+from .workflow import (
+    Workflow, WorkflowCreate, WorkflowUpdate, WorkflowStatus, WorkflowType, 
+    WorkflowStep, Clarification, ClarificationResponse, WorkflowSearch,
+    PlanRunCreate, PlanRunUpdate, PlanRunResponse, PlanRunListResponse, WorkflowMetrics
+)
 from .analytics import AnalyticsEvent, AnalyticsEventCreate, EventType, HiringMetrics, JobMetrics, DashboardMetrics
 
 __all__ = [
@@ -47,6 +51,7 @@ __all__ = [
     # Workflow models
     "Workflow", "WorkflowCreate", "WorkflowUpdate", "WorkflowStatus", "WorkflowType",
     "WorkflowStep", "Clarification", "ClarificationResponse", "WorkflowSearch",
+    "PlanRunCreate", "PlanRunUpdate", "PlanRunResponse", "PlanRunListResponse", "WorkflowMetrics",
     
     # Analytics models
     "AnalyticsEvent", "AnalyticsEventCreate", "EventType", "HiringMetrics", "JobMetrics", "DashboardMetrics",

@@ -7,7 +7,7 @@ from portia import Portia, Config, LLMProvider, StorageClass, DefaultToolRegistr
 from portia.cli import CLIExecutionHooks
 from portia.execution_hooks import clarify_on_tool_calls
 from portia.end_user import EndUser
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import logging
 from functools import lru_cache
 from pydantic import SecretStr
@@ -19,12 +19,7 @@ from src.tools import (
     ResumeScreeningTool,
     SkillsAnalysisTool,
     InterviewSchedulingTool,
-    AIInterviewTool,
-    EmailNotificationTool,
-    CommunicationTool,
-    EmailMonitoringTool,
-    ResumeProcessingTool,
-    CandidateNotificationTool
+    AIInterviewTool
 )
 
 logger = logging.getLogger(__name__)
@@ -78,12 +73,7 @@ class PortiaService:
                 ResumeScreeningTool(),
                 SkillsAnalysisTool(),
                 InterviewSchedulingTool(),
-                AIInterviewTool(),
-                EmailNotificationTool(),
-                CommunicationTool(),
-                EmailMonitoringTool(),
-                ResumeProcessingTool(),
-                CandidateNotificationTool()
+                AIInterviewTool()
             ]
             
             # Combine default and custom tools
@@ -138,50 +128,39 @@ class PortiaService:
             Dict containing plan run information
         """
         try:
-            query = f"""
-            Execute comprehensive hiring process for {job_data.get('title', 'Software Engineer')}:
+            # Create end user context
+            end_user = EndUser(external_id=hr_user_id)
             
-            Phase 1: Job Creation & Distribution
-            1. Create compelling job posting with requirements
-            2. Post to LinkedIn and selected platforms
-            3. Set up automated application collection system
+            # Create hiring workflow using Portia's built-in tools
+            workflow_query = f"""
+            Create a comprehensive hiring workflow for the {job_data.get('title', 'Software Engineer')} position.
             
-            Phase 2: Application Processing  
-            4. Parse and analyze incoming resumes
-            5. Screen candidates using AI analysis
-            6. Rank candidates by job fit score
+            The workflow should:
+            1. Monitor Gmail for job applications using 'portia:google:gmail:search_email'
+            2. For each application email, extract candidate information
+            3. Use 'llm_tool' to analyze resumes and score candidates
+            4. Schedule interviews using 'portia:google:gcalendar:create_event'
+            5. Send automated responses using 'portia:google:gmail:send_email'
+            6. Notify HR team using 'portia:slack:bot:send_message'
+            7. Track all candidates in a structured format
             
-            Phase 3: Interview Process
-            7. Schedule initial screening interviews
-            8. Conduct AI-powered technical interviews
-            9. Collect feedback from human interviewers
-            
-            Phase 4: Decision Making
-            10. Generate comprehensive candidate reports
-            11. Make hiring recommendations
-            12. Handle offer letters and rejections
+            Job Requirements: {job_data.get('requirements', [])}
+            Job Description: {job_data.get('description', '')}
             """
             
-            # Create end user context
-            end_user = EndUser(
-                external_id=hr_user_id,
-                email="hr@company.com",  # TODO: Get from user data
-                additional_data={"job_data": job_data}
-            )
-            
-            # Execute plan
+            # Run the workflow
             plan_run = self.portia.run(
-                query,
-                end_user=end_user,
-                plan_run_inputs={"job_data": job_data}
+                query=workflow_query,
+                end_user=end_user
             )
             
             return {
                 "success": True,
-                "plan_run_id": str(plan_run.id),
-                "status": plan_run.state,
-                "current_step": plan_run.current_step_index,
-                "message": "Hiring workflow created successfully"
+                "plan_run_id": plan_run.id,
+                "status": plan_run.state.value,
+                "workflow_type": "hiring_automation",
+                "job_title": job_data.get('title'),
+                "created_at": plan_run.created_at.isoformat() if plan_run.created_at else None
             }
             
         except Exception as e:
@@ -189,7 +168,128 @@ class PortiaService:
             return {
                 "success": False,
                 "error": str(e),
-                "message": "Failed to create hiring workflow"
+                "workflow_type": "hiring_automation"
+            }
+
+    async def process_email_applications(self, hr_email: str, job_keywords: List[str] = None) -> Dict[str, Any]:
+        """
+        Process job applications from HR email using Portia's Gmail tools.
+        
+        Args:
+            hr_email: HR email address to monitor
+            job_keywords: Keywords to search for in emails
+            
+        Returns:
+            Dict containing processed applications
+        """
+        try:
+            # Create end user context
+            end_user = EndUser(external_id="hr_automation")
+            
+            # Use Portia's built-in Gmail search tool
+            search_query = f"""
+            Search Gmail inbox {hr_email} for job applications.
+            
+            Look for emails containing keywords: {job_keywords or ['application', 'resume', 'cv', 'job', 'position']}
+            
+            For each application email found:
+            1. Extract sender information (name, email)
+            2. Check for resume attachments
+            3. Analyze email content for job interest
+            4. Create a structured candidate profile
+            5. Send automated acknowledgment email
+            6. Notify HR team via Slack
+            
+            Use the following Portia tools:
+            - 'portia:google:gmail:search_email' to find applications
+            - 'llm_tool' to analyze email content and extract information
+            - 'portia:google:gmail:send_email' to send responses
+            - 'portia:slack:bot:send_message' to notify team
+            """
+            
+            # Run the email processing workflow
+            plan_run = self.portia.run(
+                query=search_query,
+                end_user=end_user
+            )
+            
+            return {
+                "success": True,
+                "plan_run_id": plan_run.id,
+                "status": plan_run.state.value,
+                "email_monitored": hr_email,
+                "keywords_used": job_keywords,
+                "created_at": plan_run.created_at.isoformat() if plan_run.created_at else None
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to process email applications: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "email_monitored": hr_email
+            }
+
+    async def schedule_interview(self, candidate_data: Dict[str, Any], interview_type: str = "technical") -> Dict[str, Any]:
+        """
+        Schedule interview using Portia's Google Calendar tools.
+        
+        Args:
+            candidate_data: Candidate information
+            interview_type: Type of interview (technical, behavioral, final)
+            
+        Returns:
+            Dict containing interview scheduling result
+        """
+        try:
+            # Create end user context
+            end_user = EndUser(external_id="hr_automation")
+            
+            # Use Portia's built-in calendar tools
+            scheduling_query = f"""
+            Schedule a {interview_type} interview for candidate {candidate_data.get('name', 'Unknown')}.
+            
+            Candidate Details:
+            - Name: {candidate_data.get('name')}
+            - Email: {candidate_data.get('email')}
+            - Position: {candidate_data.get('job_title', 'Software Engineer')}
+            - Interview Type: {interview_type}
+            
+            Use the following Portia tools:
+            1. 'portia:google:gcalendar:check_availability' to find available time slots
+            2. 'portia:google:gcalendar:create_event' to schedule the interview
+            3. 'portia:google:gmail:send_email' to send interview invitation
+            4. 'portia:slack:bot:send_message' to notify HR team
+            
+            The interview should be:
+            - 45 minutes long
+            - Include video call link
+            - Send calendar invite to candidate
+            - Notify HR team via Slack
+            """
+            
+            # Run the scheduling workflow
+            plan_run = self.portia.run(
+                query=scheduling_query,
+                end_user=end_user
+            )
+            
+            return {
+                "success": True,
+                "plan_run_id": plan_run.id,
+                "status": plan_run.state.value,
+                "candidate_name": candidate_data.get('name'),
+                "interview_type": interview_type,
+                "scheduled_at": plan_run.created_at.isoformat() if plan_run.created_at else None
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to schedule interview: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "candidate_name": candidate_data.get('name'),
+                "interview_type": interview_type
             }
     
     async def screen_candidate(self, candidate_data: Dict[str, Any], job_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -232,47 +332,6 @@ class PortiaService:
             
         except Exception as e:
             logger.error(f"Failed to screen candidate: {e}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
-    
-    async def schedule_interview(self, interview_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Schedule an interview using AI coordination.
-        
-        Args:
-            interview_data: Interview details and participant information
-            
-        Returns:
-            Dict containing scheduling results
-        """
-        try:
-            query = f"""
-            Schedule interview for candidate:
-            
-            1. Check interviewer availability in calendar
-            2. Find optimal time slots for all participants
-            3. Send calendar invites with meeting details
-            4. Create meeting links (Zoom/Teams)
-            5. Send confirmation emails to all parties
-            6. Set up reminder notifications
-            """
-            
-            plan_run = self.portia.run(
-                query,
-                plan_run_inputs={"interview_data": interview_data}
-            )
-            
-            return {
-                "success": True,
-                "plan_run_id": str(plan_run.id),
-                "scheduling_result": plan_run.outputs.final_output.value if plan_run.outputs.final_output else None,
-                "status": plan_run.state
-            }
-            
-        except Exception as e:
-            logger.error(f"Failed to schedule interview: {e}")
             return {
                 "success": False,
                 "error": str(e)
