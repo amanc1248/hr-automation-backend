@@ -199,45 +199,49 @@ class AuthService:
             }
         )
     
-    async def authenticate_user(self, db: AsyncSession, email: str, password: str) -> Optional[User]:
+    async def authenticate_user(self, db: AsyncSession, email: str, password: str) -> Optional[Profile]:
         """Authenticate user with email and password"""
-        result = await db.execute(
-            select(User)
-            .options(selectinload(User.profile))
-            .where(User.email == email, User.is_active == True)
-        )
-        user = result.scalar_one_or_none()
-        
-        if not user or not self.verify_password(password, user.password_hash):
-            return None
-        
-        return user
-    
-    async def login_user(self, db: AsyncSession, login_data: UserLogin) -> AuthResponse:
-        """Login user and return tokens"""
-        user = await self.authenticate_user(db, login_data.email, login_data.password)
-        
-        if not user:
-            raise ValueError("Invalid email or password")
-        
-        if not user.profile:
-            raise ValueError("User profile not found")
-        
-        # Get company and role info
+        # First, get the profile
         result = await db.execute(
             select(Profile)
             .options(
                 selectinload(Profile.company),
                 selectinload(Profile.role)
             )
-            .where(Profile.id == user.profile_id)
+            .where(Profile.email == email, Profile.is_active == True)
         )
-        profile = result.scalar_one()
+        profile = result.scalar_one_or_none()
+        
+        if not profile:
+            return None
+        
+        # Check if profile has password hash (new user system)
+        if profile.password_hash and self.verify_password(password, profile.password_hash):
+            return profile
+        
+        # Fall back to old User table for existing users
+        user_result = await db.execute(
+            select(User)
+            .where(User.profile_id == profile.id, User.is_active == True)
+        )
+        user = user_result.scalar_one_or_none()
+        
+        if user and user.password_hash and self.verify_password(password, user.password_hash):
+            return profile
+        
+        return None
+    
+    async def login_user(self, db: AsyncSession, login_data: UserLogin) -> AuthResponse:
+        """Login user and return tokens"""
+        profile = await self.authenticate_user(db, login_data.email, login_data.password)
+        
+        if not profile:
+            raise ValueError("Invalid email or password")
         
         # Create tokens
         token_data = {
-            "sub": str(user.id),
-            "email": user.email,
+            "sub": str(profile.id),
+            "email": profile.email,
             "company_id": str(profile.company.id),
             "role_id": str(profile.role.id)
         }
@@ -245,8 +249,11 @@ class AuthService:
         access_token = self.create_access_token(token_data)
         refresh_token = self.create_refresh_token(token_data)
         
-        # Update last login
+        # Update last login and first login tracking
         profile.last_login = datetime.utcnow()
+        if not profile.first_login_at:
+            profile.first_login_at = datetime.utcnow()
+        
         await db.commit()
         
         return AuthResponse(
@@ -293,6 +300,21 @@ class AuthService:
         if not token_data or not token_data.user_id:
             return None
         
+        # First try to find by Profile.id (new system)
+        result = await db.execute(
+            select(Profile)
+            .options(
+                selectinload(Profile.company),
+                selectinload(Profile.role)
+            )
+            .where(Profile.id == token_data.user_id, Profile.is_active == True)
+        )
+        profile = result.scalar_one_or_none()
+        
+        if profile:
+            return profile
+        
+        # Fall back to old system - find by User.id
         result = await db.execute(
             select(Profile)
             .options(

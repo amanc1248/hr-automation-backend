@@ -4,9 +4,13 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 
 # Import our modules
+import sys
+import os
+sys.path.append(os.path.dirname(__file__))
+
 from core.config import settings, validate_settings
 from core.database import check_database_connection, close_database
-from api import auth
+from api import auth, users
 
 # Configure logging
 logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL))
@@ -65,6 +69,7 @@ app.add_middleware(
 
 # Include API routers
 app.include_router(auth.router, prefix="/api", tags=["authentication"])
+app.include_router(users.router, tags=["users"])
 
 # Health check endpoint
 @app.get("/")

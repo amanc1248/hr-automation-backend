@@ -46,6 +46,7 @@ class Profile(BaseModel):
     # id is inherited from BaseModel (UUID)
     
     email = Column(String(255), unique=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)  # For direct auth (not Supabase)
     first_name = Column(String(100), nullable=True)
     last_name = Column(String(100), nullable=True)
     avatar_url = Column(String(500), nullable=True)
@@ -59,6 +60,12 @@ class Profile(BaseModel):
     preferences = Column(JSONB, default=dict, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     last_login = Column(DateTime, nullable=True)
+    
+    # User management fields
+    first_login_at = Column(DateTime, nullable=True)
+    must_change_password = Column(Boolean, default=False, nullable=False)
+    password_changed_at = Column(DateTime, nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("profiles.id"), nullable=True)
     
     # Relationships
     company = relationship("Company", back_populates="profiles")
