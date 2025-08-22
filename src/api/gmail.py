@@ -1,9 +1,10 @@
 import json
 import base64
+import os
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
@@ -55,10 +56,20 @@ async def gmail_oauth_callback(
     
     # Check for OAuth errors
     if error:
-        return RedirectResponse(
-            url=f"http://localhost:5173/settings/gmail?error={error}",
-            status_code=302
-        )
+        # Load and return error HTML page
+        html_path = os.path.join(os.path.dirname(__file__), 'oauth_success.html')
+        with open(html_path, 'r') as f:
+            html_content = f.read()
+        
+        # Replace success content with error content
+        html_content = html_content.replace('✅', '❌')
+        html_content = html_content.replace('Gmail Connected Successfully!', 'Gmail Connection Failed')
+        html_content = html_content.replace('Your Gmail account has been connected.', f'OAuth error: {error}')
+        
+        error_url = f"http://localhost:5173/email-config?error={error}"
+        html_content = html_content.replace('/email-config', error_url)
+        
+        return HTMLResponse(content=html_content, status_code=200)
     
     try:
         # Decode state parameter
@@ -87,18 +98,34 @@ async def gmail_oauth_callback(
             tokens=tokens
         )
         
-        # Redirect to frontend with success
-        return RedirectResponse(
-            url=f"http://localhost:5173/settings/gmail?success=true&email={user_info['email']}",
-            status_code=302
-        )
+        # Load and return success HTML page
+        html_path = os.path.join(os.path.dirname(__file__), 'oauth_success.html')
+        with open(html_path, 'r') as f:
+            html_content = f.read()
+        
+        # Replace the redirect URL with query parameters
+        success_url = f"http://localhost:5173/email-config?success=true&email={user_info['email']}"
+        html_content = html_content.replace('/email-config', success_url)
+        
+        return HTMLResponse(content=html_content, status_code=200)
         
     except Exception as e:
         print(f"Gmail OAuth callback error: {e}")
-        return RedirectResponse(
-            url=f"http://localhost:5173/settings/gmail?error=callback_failed",
-            status_code=302
-        )
+        
+        # Load and return error HTML page
+        html_path = os.path.join(os.path.dirname(__file__), 'oauth_success.html')
+        with open(html_path, 'r') as f:
+            html_content = f.read()
+        
+        # Replace success content with error content
+        html_content = html_content.replace('✅', '❌')
+        html_content = html_content.replace('Gmail Connected Successfully!', 'Gmail Connection Failed')
+        html_content = html_content.replace('Your Gmail account has been connected.', 'Failed to connect your Gmail account.')
+        
+        error_url = f"http://localhost:5173/email-config?error=callback_failed"
+        html_content = html_content.replace('/email-config', error_url)
+        
+        return HTMLResponse(content=html_content, status_code=200)
 
 @router.get("/configs", response_model=List[dict])
 async def get_gmail_configs(
