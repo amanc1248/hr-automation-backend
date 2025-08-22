@@ -10,7 +10,7 @@ sys.path.append(os.path.dirname(__file__))
 
 from core.config import settings, validate_settings
 from core.database import check_database_connection, close_database
-from api import auth, users
+from api import auth, users, gmail
 
 # Configure logging
 logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL))
@@ -70,6 +70,7 @@ app.add_middleware(
 # Include API routers
 app.include_router(auth.router, prefix="/api", tags=["authentication"])
 app.include_router(users.router, tags=["users"])
+app.include_router(gmail.router, tags=["gmail"])
 
 # Health check endpoint
 @app.get("/")

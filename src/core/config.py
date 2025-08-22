@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = Field(default="development", description="Environment")
     LOG_LEVEL: str = Field(default="INFO", description="Logging level")
     
+    # Google OAuth Configuration
+    GOOGLE_CLIENT_ID: Optional[str] = Field(default=None, description="Google OAuth client ID")
+    GOOGLE_CLIENT_SECRET: Optional[str] = Field(default=None, description="Google OAuth client secret")
+    GOOGLE_REDIRECT_URI: Optional[str] = Field(default=None, description="Google OAuth redirect URI")
+    
+    # Encryption
+    ENCRYPTION_KEY: Optional[str] = Field(default=None, description="Encryption key for sensitive data")
+    
     # API Keys (optional for now)
     GOOGLE_API_KEY: Optional[str] = Field(default=None, description="Google API key")
     ELEVENLABS_API_KEY: Optional[str] = Field(default=None, description="ElevenLabs API key")
