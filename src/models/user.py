@@ -1,113 +1,105 @@
-"""
-User and profile models for HR Automation System.
-"""
+from sqlalchemy import Column, String, Boolean, Text, ForeignKey, DateTime, Integer
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.orm import relationship
+from .base import BaseModel, BaseModelWithSoftDelete
+from datetime import datetime
 
-from pydantic import BaseModel, Field, EmailStr
-from typing import Optional
-from enum import Enum
-from uuid import UUID
-
-from .base import BaseEntity, BaseCreate, BaseUpdate
-
-
-class UserRole(str, Enum):
-    """User roles in the system"""
-    HR_MANAGER = "hr_manager"
-    INTERVIEWER = "interviewer"
-    ADMIN = "admin"
-
-
-class UserProfile(BaseEntity):
-    """User profile model"""
-    email: EmailStr = Field(description="User email address")
-    full_name: Optional[str] = Field(default=None, description="User's full name")
-    role: UserRole = Field(default=UserRole.HR_MANAGER, description="User role in the system")
-    company_id: Optional[UUID] = Field(default=None, description="Associated company ID")
+class Company(BaseModel):
+    """Company model"""
+    __tablename__ = "companies"
     
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "id": "550e8400-e29b-41d4-a716-446655440000",
-                "email": "hr@company.com",
-                "full_name": "Jane Smith",
-                "role": "hr_manager",
-                "company_id": "660e8400-e29b-41d4-a716-446655440001",
-                "created_at": "2025-01-20T00:00:00Z",
-                "updated_at": "2025-01-20T00:00:00Z"
-            }
-        }
-    }
-
-
-class UserCreate(BaseCreate):
-    """Model for creating a new user profile"""
-    email: EmailStr = Field(description="User email address")
-    full_name: Optional[str] = Field(default=None, description="User's full name")
-    role: UserRole = Field(default=UserRole.HR_MANAGER, description="User role in the system")
-    company_id: Optional[UUID] = Field(default=None, description="Associated company ID")
+    name = Column(String(255), nullable=False)
+    domain = Column(String(255), unique=True, nullable=True)
+    description = Column(Text, nullable=True)
+    website = Column(String(500), nullable=True)
+    industry = Column(String(100), nullable=True)
+    size = Column(String(50), nullable=True)  # startup, small, medium, large, enterprise
+    logo_url = Column(String(500), nullable=True)
+    settings = Column(JSONB, default=dict, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
     
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "email": "hr@company.com",
-                "full_name": "Jane Smith",
-                "role": "hr_manager",
-                "company_id": "660e8400-e29b-41d4-a716-446655440001"
-            }
-        }
-    }
+    # Relationships
+    profiles = relationship("Profile", back_populates="company", cascade="all, delete-orphan")
+    jobs = relationship("Job", back_populates="company", cascade="all, delete-orphan")
+    workflow_templates = relationship("WorkflowTemplate", back_populates="company", cascade="all, delete-orphan")
+    email_accounts = relationship("EmailAccount", back_populates="company", cascade="all, delete-orphan")
 
-
-class UserUpdate(BaseUpdate):
-    """Model for updating user profile"""
-    full_name: Optional[str] = Field(default=None, description="User's full name")
-    role: Optional[UserRole] = Field(default=None, description="User role in the system")
-    company_id: Optional[UUID] = Field(default=None, description="Associated company ID")
+class UserRole(BaseModel):
+    """User roles model"""
+    __tablename__ = "user_roles"
     
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "full_name": "Jane Smith Updated",
-                "role": "admin"
-            }
-        }
-    }
-
-
-class UserLogin(BaseModel):
-    """Model for user login"""
-    email: EmailStr = Field(description="User email address")
-    password: str = Field(min_length=8, description="User password")
+    name = Column(String(50), unique=True, nullable=False)
+    display_name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    permissions = Column(JSONB, default=list, nullable=False)
+    approval_types = Column(JSONB, default=list, nullable=False)
+    is_system_role = Column(Boolean, default=False, nullable=False)
     
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "email": "hr@company.com",
-                "password": "securepassword123"
-            }
-        }
-    }
+    # Relationships
+    profiles = relationship("Profile", back_populates="role")
 
-
-class UserToken(BaseModel):
-    """Model for authentication token response"""
-    access_token: str = Field(description="JWT access token")
-    token_type: str = Field(default="bearer", description="Token type")
-    expires_in: int = Field(description="Token expiration time in seconds")
-    user: UserProfile = Field(description="User profile information")
+class Profile(BaseModel):
+    """User profile model (extends Supabase auth.users)"""
+    __tablename__ = "profiles"
     
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-                "token_type": "bearer",
-                "expires_in": 3600,
-                "user": {
-                    "id": "550e8400-e29b-41d4-a716-446655440000",
-                    "email": "hr@company.com",
-                    "full_name": "Jane Smith",
-                    "role": "hr_manager"
-                }
-            }
-        }
-    }
+    # This ID should match Supabase auth.users.id
+    # id is inherited from BaseModel (UUID)
+    
+    email = Column(String(255), unique=True, nullable=False)
+    first_name = Column(String(100), nullable=True)
+    last_name = Column(String(100), nullable=True)
+    avatar_url = Column(String(500), nullable=True)
+    phone = Column(String(20), nullable=True)
+    
+    # Company and role
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
+    role_id = Column(UUID(as_uuid=True), ForeignKey("user_roles.id"), nullable=False)
+    
+    # Profile settings
+    preferences = Column(JSONB, default=dict, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    last_login = Column(DateTime, nullable=True)
+    
+    # Relationships
+    company = relationship("Company", back_populates="profiles")
+    role = relationship("UserRole", back_populates="profiles")
+    created_jobs = relationship("Job", foreign_keys="Job.created_by", back_populates="creator")
+    assigned_jobs = relationship("Job", foreign_keys="Job.assigned_to", back_populates="assignee")
+    workflow_executions = relationship("WorkflowExecution", back_populates="initiated_by_user")
+    # Fix ambiguous foreign key by specifying which foreign key to use
+    workflow_approvals = relationship("WorkflowApproval", foreign_keys="WorkflowApproval.approver_id", back_populates="approver")
+
+class User(BaseModel):
+    """User model for authentication (if not using Supabase auth)"""
+    __tablename__ = "users"
+    
+    email = Column(String(255), unique=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    is_verified = Column(Boolean, default=False, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    verification_token = Column(String(255), nullable=True)
+    reset_token = Column(String(255), nullable=True)
+    reset_token_expires = Column(DateTime, nullable=True)
+    
+    # Link to profile
+    profile_id = Column(UUID(as_uuid=True), ForeignKey("profiles.id"), nullable=True)
+    profile = relationship("Profile")
+
+class UserInvitation(BaseModel):
+    """User invitation model"""
+    __tablename__ = "user_invitations"
+    
+    email = Column(String(255), nullable=False)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
+    role_id = Column(UUID(as_uuid=True), ForeignKey("user_roles.id"), nullable=False)
+    invited_by = Column(UUID(as_uuid=True), ForeignKey("profiles.id"), nullable=False)
+    
+    invitation_token = Column(String(255), unique=True, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    accepted_at = Column(DateTime, nullable=True)
+    is_accepted = Column(Boolean, default=False, nullable=False)
+    
+    # Relationships
+    company = relationship("Company")
+    role = relationship("UserRole")
+    inviter = relationship("Profile")

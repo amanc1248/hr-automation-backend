@@ -1,3 +1,4 @@
-"""Services package for HR Automation System"""
+# Services package
+from .auth_service import AuthService
 
-# This file makes the services directory a Python package
+__all__ = ["AuthService"]

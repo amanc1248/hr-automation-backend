@@ -1,45 +1,28 @@
 #!/usr/bin/env python3
 """
-Development server runner for HR Automation Backend.
-Provides easy way to start the development server with proper configuration.
+Development server with hot reload
 """
 
-import os
 import sys
-import uvicorn
 from pathlib import Path
 
-# Add src directory to Python path
-src_path = Path(__file__).parent / "src"
-sys.path.insert(0, str(src_path))
-
-def main():
-    """Run the development server"""
-    
-    # Check if .env file exists
-    env_file = Path(__file__).parent / ".env"
-    if not env_file.exists():
-        print("❌ .env file not found!")
-        print("📝 Please copy env.example to .env and configure your API keys")
-        print("   cp env.example .env")
-        return 1
-    
-    print("🚀 Starting HR Automation Backend...")
-    print("📊 API Documentation will be available at:")
-    print("   • Swagger UI: http://localhost:8001/docs")
-    print("   • ReDoc: http://localhost:8001/redoc")
-    print("   • Health Check: http://localhost:8001/health")
-    print()
-    
-    # Run the server
-    uvicorn.run(
-        "src.main:app",
-        host="0.0.0.0",
-        port=8001,
-        reload=True,
-        log_level="info",
-        access_log=True
-    )
+# Add src to Python path
+sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 if __name__ == "__main__":
-    exit(main())
+    import uvicorn
+    
+    print("🚀 Starting HR Automation Backend (Development Mode)")
+    print("📍 Server will be available at: http://localhost:8000")
+    print("📚 API Documentation: http://localhost:8000/docs")
+    print("🔄 Hot reload enabled - changes will restart the server")
+    print("=" * 60)
+    
+    uvicorn.run(
+        "main:app",
+        host="127.0.0.1",
+        port=8000,
+        reload=True,
+        reload_dirs=["src"],
+        log_level="info"
+    )

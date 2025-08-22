@@ -1,280 +1,69 @@
-"""
-Job models for HR Automation System.
-"""
+from sqlalchemy import Column, String, Boolean, Text, ForeignKey, DateTime, Integer, Numeric
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.orm import relationship
+from .base import BaseModel, BaseModelWithSoftDelete
 
-from pydantic import Field, HttpUrl
-from typing import Optional, List, Dict, Any
-from enum import Enum
-from uuid import UUID
-from decimal import Decimal
-
-from .base import BaseEntity, BaseCreate, BaseUpdate
-
-
-class JobType(str, Enum):
-    """Job type enumeration"""
-    FULL_TIME = "full_time"
-    PART_TIME = "part_time"
-    CONTRACT = "contract"
-    INTERNSHIP = "internship"
-    FREELANCE = "freelance"
-
-
-class JobStatus(str, Enum):
-    """Job status enumeration"""
-    DRAFT = "draft"
-    PUBLISHED = "published"
-    PAUSED = "paused"
-    CLOSED = "closed"
-    ARCHIVED = "archived"
-
-
-class ExperienceLevel(str, Enum):
-    """Experience level enumeration"""
-    ENTRY = "entry"
-    JUNIOR = "junior"
-    MID = "mid"
-    SENIOR = "senior"
-    LEAD = "lead"
-    PRINCIPAL = "principal"
-
-
-class SalaryRange(BaseCreate):
-    """Salary range model"""
-    min_salary: Optional[Decimal] = Field(default=None, ge=0, description="Minimum salary")
-    max_salary: Optional[Decimal] = Field(default=None, ge=0, description="Maximum salary")
-    currency: str = Field(default="USD", max_length=3, description="Currency code (ISO 4217)")
-    period: str = Field(default="yearly", description="Salary period (yearly, monthly, hourly)")
+class Job(BaseModel):
+    """Job posting model"""
+    __tablename__ = "jobs"
     
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "min_salary": 80000,
-                "max_salary": 120000,
-                "currency": "USD",
-                "period": "yearly"
-            }
-        }
-    }
-
-
-class JobRequirement(BaseCreate):
-    """Job requirement model"""
-    category: str = Field(description="Requirement category (skills, education, experience)")
-    name: str = Field(description="Requirement name")
-    level: str = Field(default="required", description="Requirement level (required, preferred, nice_to_have)")
-    years_experience: Optional[int] = Field(default=None, ge=0, description="Years of experience required")
-    
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "category": "skills",
-                "name": "Python",
-                "level": "required",
-                "years_experience": 3
-            }
-        }
-    }
-
-
-class Job(BaseEntity):
-    """Job model"""
-    title: str = Field(min_length=1, max_length=200, description="Job title")
-    description: Optional[str] = Field(default=None, description="Job description")
-    summary: Optional[str] = Field(default=None, max_length=500, description="Brief job summary")
-    requirements: List[JobRequirement] = Field(default_factory=list, description="Job requirements")
-    responsibilities: List[str] = Field(default_factory=list, description="Job responsibilities")
-    benefits: List[str] = Field(default_factory=list, description="Job benefits")
-    
-    # Location and work arrangement
-    location: Optional[str] = Field(default=None, max_length=200, description="Job location")
-    remote_allowed: bool = Field(default=False, description="Whether remote work is allowed")
-    hybrid_allowed: bool = Field(default=False, description="Whether hybrid work is allowed")
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=False)
+    requirements = Column(Text, nullable=True)
+    requirements_structured = Column(JSONB, default=dict, nullable=False)
     
     # Job details
-    job_type: JobType = Field(default=JobType.FULL_TIME, description="Type of employment")
-    experience_level: ExperienceLevel = Field(default=ExperienceLevel.MID, description="Required experience level")
-    salary_range: Optional[SalaryRange] = Field(default=None, description="Salary range")
+    department = Column(String(100), nullable=True)
+    location = Column(String(255), nullable=True)
+    job_type = Column(String(50), nullable=False)  # full-time, part-time, contract, internship
+    experience_level = Column(String(50), nullable=True)  # entry, mid, senior, executive
+    remote_policy = Column(String(50), nullable=True)  # remote, hybrid, onsite
     
-    # Status and metadata
-    status: JobStatus = Field(default=JobStatus.DRAFT, description="Job posting status")
-    company_id: UUID = Field(description="Company that posted the job")
-    created_by: UUID = Field(description="User who created the job")
+    # Compensation
+    salary_min = Column(Numeric(12, 2), nullable=True)
+    salary_max = Column(Numeric(12, 2), nullable=True)
+    salary_currency = Column(String(3), default="USD", nullable=False)
     
-    # Posting and application settings
-    posted_platforms: List[str] = Field(default_factory=list, description="Platforms where job is posted")
-    application_deadline: Optional[str] = Field(default=None, description="Application deadline")
-    external_job_id: Optional[str] = Field(default=None, description="External job ID from job boards")
+    # Status and workflow
+    status = Column(String(50), default="draft", nullable=False)  # draft, active, paused, closed
+    workflow_template_id = Column(UUID(as_uuid=True), ForeignKey("workflow_templates.id"), nullable=True)
     
-    # AI and automation settings
-    auto_screening_enabled: bool = Field(default=True, description="Enable automatic screening")
-    ai_interview_enabled: bool = Field(default=False, description="Enable AI interviews")
-    screening_questions: List[str] = Field(default_factory=list, description="Custom screening questions")
+    # Company and ownership
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("profiles.id"), nullable=False)
+    assigned_to = Column(UUID(as_uuid=True), ForeignKey("profiles.id"), nullable=True)
     
-    # Analytics
-    views_count: int = Field(default=0, ge=0, description="Number of job views")
-    applications_count: int = Field(default=0, ge=0, description="Number of applications received")
+    # Posting details
+    posted_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    is_featured = Column(Boolean, default=False, nullable=False)
     
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "id": "770e8400-e29b-41d4-a716-446655440002",
-                "title": "Senior Full Stack Engineer",
-                "description": "We are looking for a senior full stack engineer...",
-                "summary": "Senior role for experienced full stack developer",
-                "requirements": [
-                    {
-                        "category": "skills",
-                        "name": "Python",
-                        "level": "required",
-                        "years_experience": 5
-                    },
-                    {
-                        "category": "skills", 
-                        "name": "React",
-                        "level": "required",
-                        "years_experience": 3
-                    }
-                ],
-                "responsibilities": [
-                    "Develop and maintain web applications",
-                    "Collaborate with cross-functional teams",
-                    "Mentor junior developers"
-                ],
-                "location": "San Francisco, CA",
-                "remote_allowed": True,
-                "job_type": "full_time",
-                "experience_level": "senior",
-                "salary_range": {
-                    "min_salary": 120000,
-                    "max_salary": 180000,
-                    "currency": "USD",
-                    "period": "yearly"
-                },
-                "status": "published",
-                "company_id": "660e8400-e29b-41d4-a716-446655440001",
-                "auto_screening_enabled": True,
-                "ai_interview_enabled": True
-            }
-        }
-    }
+    # External posting tracking
+    external_postings = Column(JSONB, default=list, nullable=False)  # LinkedIn, Indeed, etc.
+    
+    # Relationships
+    company = relationship("Company", back_populates="jobs")
+    creator = relationship("Profile", foreign_keys=[created_by], back_populates="created_jobs")
+    assignee = relationship("Profile", foreign_keys=[assigned_to], back_populates="assigned_jobs")
+    workflow_template = relationship("WorkflowTemplate", back_populates="jobs")
+    applications = relationship("Application", back_populates="job", cascade="all, delete-orphan")
+    interviews = relationship("Interview", back_populates="job", cascade="all, delete-orphan")
+    requirements_list = relationship("JobRequirement", back_populates="job", cascade="all, delete-orphan")
 
-
-class JobCreate(BaseCreate):
-    """Model for creating a new job"""
-    title: str = Field(min_length=1, max_length=200, description="Job title")
-    description: Optional[str] = Field(default=None, description="Job description")
-    summary: Optional[str] = Field(default=None, max_length=500, description="Brief job summary")
-    requirements: List[JobRequirement] = Field(default_factory=list, description="Job requirements")
-    responsibilities: List[str] = Field(default_factory=list, description="Job responsibilities")
-    benefits: List[str] = Field(default_factory=list, description="Job benefits")
+class JobRequirement(BaseModel):
+    """Job requirements model"""
+    __tablename__ = "job_requirements"
     
-    location: Optional[str] = Field(default=None, max_length=200, description="Job location")
-    remote_allowed: bool = Field(default=False, description="Whether remote work is allowed")
-    hybrid_allowed: bool = Field(default=False, description="Whether hybrid work is allowed")
+    job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id"), nullable=False)
+    requirement_type = Column(String(50), nullable=False)  # skill, experience, education, certification
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    is_required = Column(Boolean, default=True, nullable=False)
+    priority = Column(Integer, default=1, nullable=False)  # 1=high, 2=medium, 3=low
     
-    job_type: JobType = Field(default=JobType.FULL_TIME, description="Type of employment")
-    experience_level: ExperienceLevel = Field(default=ExperienceLevel.MID, description="Required experience level")
-    salary_range: Optional[SalaryRange] = Field(default=None, description="Salary range")
+    # Skill-specific fields
+    proficiency_level = Column(String(50), nullable=True)  # beginner, intermediate, advanced, expert
+    years_experience = Column(Integer, nullable=True)
     
-    company_id: UUID = Field(description="Company that posted the job")
-    
-    posted_platforms: List[str] = Field(default_factory=list, description="Platforms where job should be posted")
-    application_deadline: Optional[str] = Field(default=None, description="Application deadline")
-    
-    auto_screening_enabled: bool = Field(default=True, description="Enable automatic screening")
-    ai_interview_enabled: bool = Field(default=False, description="Enable AI interviews")
-    screening_questions: List[str] = Field(default_factory=list, description="Custom screening questions")
-    
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "title": "Senior Full Stack Engineer",
-                "description": "We are looking for a senior full stack engineer to join our team...",
-                "summary": "Senior role for experienced full stack developer",
-                "requirements": [
-                    {
-                        "category": "skills",
-                        "name": "Python",
-                        "level": "required",
-                        "years_experience": 5
-                    }
-                ],
-                "responsibilities": [
-                    "Develop and maintain web applications",
-                    "Collaborate with cross-functional teams"
-                ],
-                "location": "San Francisco, CA",
-                "remote_allowed": True,
-                "job_type": "full_time",
-                "experience_level": "senior",
-                "company_id": "660e8400-e29b-41d4-a716-446655440001",
-                "posted_platforms": ["linkedin", "indeed"],
-                "auto_screening_enabled": True,
-                "ai_interview_enabled": True
-            }
-        }
-    }
-
-
-class JobUpdate(BaseUpdate):
-    """Model for updating job information"""
-    title: Optional[str] = Field(default=None, min_length=1, max_length=200, description="Job title")
-    description: Optional[str] = Field(default=None, description="Job description")
-    summary: Optional[str] = Field(default=None, max_length=500, description="Brief job summary")
-    requirements: Optional[List[JobRequirement]] = Field(default=None, description="Job requirements")
-    responsibilities: Optional[List[str]] = Field(default=None, description="Job responsibilities")
-    benefits: Optional[List[str]] = Field(default=None, description="Job benefits")
-    
-    location: Optional[str] = Field(default=None, max_length=200, description="Job location")
-    remote_allowed: Optional[bool] = Field(default=None, description="Whether remote work is allowed")
-    hybrid_allowed: Optional[bool] = Field(default=None, description="Whether hybrid work is allowed")
-    
-    job_type: Optional[JobType] = Field(default=None, description="Type of employment")
-    experience_level: Optional[ExperienceLevel] = Field(default=None, description="Required experience level")
-    salary_range: Optional[SalaryRange] = Field(default=None, description="Salary range")
-    
-    status: Optional[JobStatus] = Field(default=None, description="Job posting status")
-    posted_platforms: Optional[List[str]] = Field(default=None, description="Platforms where job is posted")
-    application_deadline: Optional[str] = Field(default=None, description="Application deadline")
-    
-    auto_screening_enabled: Optional[bool] = Field(default=None, description="Enable automatic screening")
-    ai_interview_enabled: Optional[bool] = Field(default=None, description="Enable AI interviews")
-    screening_questions: Optional[List[str]] = Field(default=None, description="Custom screening questions")
-    
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "title": "Senior Full Stack Engineer - Updated",
-                "status": "published",
-                "remote_allowed": True,
-                "ai_interview_enabled": True
-            }
-        }
-    }
-
-
-class JobSearch(BaseCreate):
-    """Model for job search parameters"""
-    query: Optional[str] = Field(default=None, description="Search query")
-    location: Optional[str] = Field(default=None, description="Location filter")
-    job_type: Optional[JobType] = Field(default=None, description="Job type filter")
-    experience_level: Optional[ExperienceLevel] = Field(default=None, description="Experience level filter")
-    remote_allowed: Optional[bool] = Field(default=None, description="Remote work filter")
-    salary_min: Optional[Decimal] = Field(default=None, ge=0, description="Minimum salary filter")
-    salary_max: Optional[Decimal] = Field(default=None, ge=0, description="Maximum salary filter")
-    company_id: Optional[UUID] = Field(default=None, description="Company filter")
-    status: Optional[JobStatus] = Field(default=None, description="Status filter")
-    
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "query": "python developer",
-                "location": "San Francisco",
-                "job_type": "full_time",
-                "experience_level": "senior",
-                "remote_allowed": True,
-                "salary_min": 100000
-            }
-        }
-    }
+    # Relationships
+    job = relationship("Job", back_populates="requirements_list")

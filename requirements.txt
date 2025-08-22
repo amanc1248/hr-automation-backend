@@ -18,6 +18,8 @@ pydantic-settings>=2.1.0
 # Authentication and security
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
+PyJWT>=2.8.0
+sqlalchemy>=2.0.23
 
 # HTTP client for external APIs
 httpx>=0.25.2
@@ -36,3 +38,5 @@ mypy>=1.7.1
 
 # Logging and monitoring
 structlog>=23.2.0
+python-jose[cryptography]
+python-multipart

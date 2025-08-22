@@ -1,349 +1,181 @@
-"""
-Workflow models for HR Automation System (Portia integration).
-"""
+from sqlalchemy import Column, String, Boolean, Text, ForeignKey, DateTime, Integer
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.orm import relationship
+from .base import BaseModel, BaseModelWithSoftDelete
 
-from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any, List
-from enum import Enum
-from uuid import UUID
-from decimal import Decimal
-from datetime import datetime
-
-from .base import BaseEntity, BaseCreate, BaseUpdate
-
-
-class WorkflowType(str, Enum):
-    """Workflow type enumeration"""
-    HIRING_PROCESS = "hiring_process"
-    HIRING_AUTOMATION = "hiring_automation"
-    EMAIL_PROCESSING = "email_processing"
-    INTERVIEW_SCHEDULING = "interview_scheduling"
-    CANDIDATE_SCREENING = "candidate_screening"
-    AI_INTERVIEW = "ai_interview"
-    ASSESSMENT_CREATION = "assessment_creation"
-    OFFER_GENERATION = "offer_generation"
-    ONBOARDING = "onboarding"
-    JOB_POSTING = "job_posting"
-    CUSTOM = "custom"
-
-
-class WorkflowStatus(str, Enum):
-    """Workflow status enumeration"""
-    PENDING = "pending"
-    RUNNING = "running"
-    PAUSED = "paused"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-class EntityType(str, Enum):
-    """Entity type enumeration for workflow context"""
-    JOB = "job"
-    CANDIDATE = "candidate"
-    APPLICATION = "application"
-    INTERVIEW = "interview"
-    ASSESSMENT = "assessment"
-    COMPANY = "company"
-
-
-class WorkflowStep(BaseCreate):
-    """Individual workflow step model"""
-    step_id: str = Field(description="Unique step identifier")
-    step_name: str = Field(description="Human-readable step name")
-    step_type: str = Field(description="Type of step (tool_call, decision, human_input)")
-    description: Optional[str] = Field(default=None, description="Step description")
+class WorkflowTemplate(BaseModel):
+    """Workflow template model"""
+    __tablename__ = "workflow_templates"
     
-    # Execution details
-    status: str = Field(default="pending", description="Step status")
-    started_at: Optional[str] = Field(default=None, description="When step started")
-    completed_at: Optional[str] = Field(default=None, description="When step completed")
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    category = Column(String(100), nullable=False)  # hiring, onboarding, performance_review
     
-    # Input/Output
-    inputs: Dict[str, Any] = Field(default_factory=dict, description="Step inputs")
-    outputs: Dict[str, Any] = Field(default_factory=dict, description="Step outputs")
+    # Template configuration
+    is_active = Column(Boolean, default=True, nullable=False)
+    is_default = Column(Boolean, default=False, nullable=False)
+    version = Column(String(20), default="1.0", nullable=False)
     
-    # Error handling
-    error_message: Optional[str] = Field(default=None, description="Error message if step failed")
-    retry_count: int = Field(default=0, ge=0, description="Number of retries attempted")
+    # Company association
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
     
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "step_id": "screen_resume",
-                "step_name": "AI Resume Screening",
-                "step_type": "tool_call",
-                "description": "Analyze candidate resume using AI",
-                "status": "completed",
-                "started_at": "2025-01-25T10:00:00Z",
-                "completed_at": "2025-01-25T10:02:30Z",
-                "inputs": {"resume_text": "John Doe's resume..."},
-                "outputs": {"screening_score": 0.85, "recommendation": "proceed"}
-            }
-        }
-    }
-
-
-class Clarification(BaseCreate):
-    """Workflow clarification model (human-in-the-loop)"""
-    clarification_id: str = Field(description="Unique clarification identifier")
-    question: str = Field(description="Question for human reviewer")
-    context: Dict[str, Any] = Field(default_factory=dict, description="Context information")
-    
-    # Response details
-    response: Optional[Any] = Field(default=None, description="Human response")
-    responded_by: Optional[UUID] = Field(default=None, description="ID of person who responded")
-    responded_at: Optional[str] = Field(default=None, description="When response was provided")
+    # Workflow settings
+    auto_start = Column(Boolean, default=False, nullable=False)
+    parallel_execution = Column(Boolean, default=False, nullable=False)
+    timeout_hours = Column(Integer, nullable=True)
     
     # Metadata
-    priority: str = Field(default="medium", description="Clarification priority")
-    timeout_minutes: Optional[int] = Field(default=None, description="Timeout for response")
+    tags = Column(JSONB, default=list, nullable=False)
+    settings = Column(JSONB, default=dict, nullable=False)
     
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "clarification_id": "approve_offer",
-                "question": "Should we proceed with offer for John Doe at $120k salary?",
-                "context": {
-                    "candidate_name": "John Doe",
-                    "position": "Senior Engineer",
-                    "salary": 120000,
-                    "screening_score": 0.85
-                },
-                "priority": "high",
-                "timeout_minutes": 60
-            }
-        }
-    }
+    # Relationships
+    company = relationship("Company", back_populates="workflow_templates")
+    steps = relationship("WorkflowStep", back_populates="template", cascade="all, delete-orphan", order_by="WorkflowStep.order")
+    executions = relationship("WorkflowExecution", back_populates="template")
+    jobs = relationship("Job", back_populates="workflow_template")
 
+class WorkflowStep(BaseModel):
+    """Workflow step model"""
+    __tablename__ = "workflow_steps"
+    
+    template_id = Column(UUID(as_uuid=True), ForeignKey("workflow_templates.id"), nullable=False)
+    
+    # Step details
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    step_type = Column(String(50), nullable=False)
+    # Types: manual_review, ai_screening, interview_scheduling, email_send, approval, decision
+    
+    # Ordering and flow
+    order = Column(Integer, nullable=False)
+    parent_step_id = Column(UUID(as_uuid=True), ForeignKey("workflow_steps.id"), nullable=True)
+    
+    # Step configuration
+    config = Column(JSONB, default=dict, nullable=False)
+    conditions = Column(JSONB, default=dict, nullable=False)  # Conditions to execute this step
+    
+    # Timing
+    auto_execute = Column(Boolean, default=False, nullable=False)
+    timeout_hours = Column(Integer, nullable=True)
+    
+    # Assignment
+    assigned_role_id = Column(UUID(as_uuid=True), ForeignKey("user_roles.id"), nullable=True)
+    assigned_user_id = Column(UUID(as_uuid=True), ForeignKey("profiles.id"), nullable=True)
+    
+    # Status
+    is_active = Column(Boolean, default=True, nullable=False)
+    is_required = Column(Boolean, default=True, nullable=False)
+    
+    # Relationships
+    template = relationship("WorkflowTemplate", back_populates="steps")
+    parent_step = relationship("WorkflowStep", remote_side="WorkflowStep.id")
+    child_steps = relationship("WorkflowStep", back_populates="parent_step")
+    assigned_role = relationship("UserRole")
+    assigned_user = relationship("Profile")
+    executions = relationship("WorkflowStepExecution", back_populates="step")
 
-class Workflow(BaseEntity):
-    """Workflow model for Portia plan runs"""
-    # Portia integration
-    plan_run_id: Optional[str] = Field(default=None, description="Portia plan run ID")
+class WorkflowExecution(BaseModel):
+    """Workflow execution instance"""
+    __tablename__ = "workflow_executions"
     
-    # Workflow identification
-    workflow_type: WorkflowType = Field(description="Type of workflow")
-    name: str = Field(description="Workflow name")
-    description: Optional[str] = Field(default=None, description="Workflow description")
-    
-    # Entity context
-    entity_id: Optional[UUID] = Field(default=None, description="Related entity ID")
-    entity_type: Optional[EntityType] = Field(default=None, description="Type of related entity")
-    
-    # Status and progress
-    status: WorkflowStatus = Field(default=WorkflowStatus.PENDING, description="Workflow status")
-    current_step_index: int = Field(default=0, ge=0, description="Current step index")
-    total_steps: Optional[int] = Field(default=None, ge=0, description="Total number of steps")
-    progress_percentage: Decimal = Field(default=0.0, ge=0.0, le=100.0, description="Progress percentage")
+    template_id = Column(UUID(as_uuid=True), ForeignKey("workflow_templates.id"), nullable=False)
+    application_id = Column(UUID(as_uuid=True), ForeignKey("applications.id"), nullable=True)
     
     # Execution details
-    started_at: Optional[str] = Field(default=None, description="When workflow started")
-    completed_at: Optional[str] = Field(default=None, description="When workflow completed")
-    estimated_completion: Optional[str] = Field(default=None, description="Estimated completion time")
+    status = Column(String(50), default="pending", nullable=False)
+    # Statuses: pending, running, paused, completed, failed, cancelled
     
-    # Steps and clarifications
-    steps: List[WorkflowStep] = Field(default_factory=list, description="Workflow steps")
-    clarifications: List[Clarification] = Field(default_factory=list, description="Pending clarifications")
+    current_step_id = Column(UUID(as_uuid=True), ForeignKey("workflow_steps.id"), nullable=True)
     
-    # Outputs and results
-    outputs: Dict[str, Any] = Field(default_factory=dict, description="Workflow outputs")
-    final_result: Optional[Dict[str, Any]] = Field(default=None, description="Final workflow result")
+    # Execution context
+    context_data = Column(JSONB, default=dict, nullable=False)  # Data passed between steps
+    execution_log = Column(JSONB, default=list, nullable=False)  # Execution history
     
-    # Error handling
-    error_message: Optional[str] = Field(default=None, description="Error message if workflow failed")
-    error_details: Optional[Dict[str, Any]] = Field(default=None, description="Detailed error information")
+    # Timing
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    paused_at = Column(DateTime, nullable=True)
     
-    # User context
-    created_by: UUID = Field(description="User who created the workflow")
-    assigned_to: Optional[UUID] = Field(default=None, description="User assigned to handle clarifications")
+    # Ownership
+    initiated_by = Column(UUID(as_uuid=True), ForeignKey("profiles.id"), nullable=False)
     
-    # Configuration
-    auto_resume: bool = Field(default=True, description="Auto-resume after clarifications")
-    timeout_minutes: Optional[int] = Field(default=None, description="Workflow timeout")
+    # Results
+    final_result = Column(String(50), nullable=True)  # approved, rejected, on_hold
+    result_data = Column(JSONB, default=dict, nullable=False)
     
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "id": "cc0e8400-e29b-41d4-a716-446655440007",
-                "plan_run_id": "prun_123456789",
-                "workflow_type": "hiring_process",
-                "name": "Complete Hiring Process - Senior Engineer",
-                "entity_id": "770e8400-e29b-41d4-a716-446655440002",
-                "entity_type": "job",
-                "status": "running",
-                "current_step_index": 3,
-                "total_steps": 8,
-                "progress_percentage": 37.5,
-                "started_at": "2025-01-25T09:00:00Z",
-                "created_by": "550e8400-e29b-41d4-a716-446655440000",
-                "steps": [
-                    {
-                        "step_id": "create_job_posting",
-                        "step_name": "Create Job Posting",
-                        "status": "completed"
-                    }
-                ],
-                "clarifications": [
-                    {
-                        "clarification_id": "approve_candidate",
-                        "question": "Should we proceed with this candidate?",
-                        "priority": "high"
-                    }
-                ]
-            }
-        }
-    }
+    # Relationships
+    template = relationship("WorkflowTemplate", back_populates="executions")
+    # One-to-one relationship: one execution can have one application
+    application = relationship("Application", foreign_keys=[application_id], uselist=False)
+    current_step = relationship("WorkflowStep")
+    initiated_by_user = relationship("Profile", back_populates="workflow_executions")
+    step_executions = relationship("WorkflowStepExecution", back_populates="workflow_execution", cascade="all, delete-orphan")
+    approvals = relationship("WorkflowApproval", back_populates="workflow_execution")
 
+class WorkflowStepExecution(BaseModel):
+    """Individual step execution"""
+    __tablename__ = "workflow_step_executions"
+    
+    workflow_execution_id = Column(UUID(as_uuid=True), ForeignKey("workflow_executions.id"), nullable=False)
+    step_id = Column(UUID(as_uuid=True), ForeignKey("workflow_steps.id"), nullable=False)
+    
+    # Execution details
+    status = Column(String(50), default="pending", nullable=False)
+    # Statuses: pending, running, completed, failed, skipped, waiting_approval
+    
+    # Assignment
+    assigned_to = Column(UUID(as_uuid=True), ForeignKey("profiles.id"), nullable=True)
+    
+    # Timing
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    due_at = Column(DateTime, nullable=True)
+    
+    # Results
+    result = Column(String(50), nullable=True)  # approved, rejected, completed, failed
+    result_data = Column(JSONB, default=dict, nullable=False)
+    notes = Column(Text, nullable=True)
+    
+    # Execution log
+    execution_log = Column(JSONB, default=list, nullable=False)
+    error_message = Column(Text, nullable=True)
+    
+    # Relationships
+    workflow_execution = relationship("WorkflowExecution", back_populates="step_executions")
+    step = relationship("WorkflowStep", back_populates="executions")
+    assigned_user = relationship("Profile")
 
-class WorkflowCreate(BaseCreate):
-    """Model for creating a new workflow"""
-    workflow_type: WorkflowType = Field(description="Type of workflow")
-    name: str = Field(description="Workflow name")
-    description: Optional[str] = Field(default=None, description="Workflow description")
+class WorkflowApproval(BaseModel):
+    """Workflow approval model"""
+    __tablename__ = "workflow_approvals"
     
-    entity_id: Optional[UUID] = Field(default=None, description="Related entity ID")
-    entity_type: Optional[EntityType] = Field(default=None, description="Type of related entity")
+    workflow_execution_id = Column(UUID(as_uuid=True), ForeignKey("workflow_executions.id"), nullable=False)
+    step_execution_id = Column(UUID(as_uuid=True), ForeignKey("workflow_step_executions.id"), nullable=True)
     
-    created_by: UUID = Field(description="User who created the workflow")
-    assigned_to: Optional[UUID] = Field(default=None, description="User assigned to handle clarifications")
+    # Approval details
+    approval_type = Column(String(50), nullable=False)  # step_approval, final_approval, exception_approval
+    required_role_id = Column(UUID(as_uuid=True), ForeignKey("user_roles.id"), nullable=True)
     
-    # Configuration
-    auto_resume: bool = Field(default=True, description="Auto-resume after clarifications")
-    timeout_minutes: Optional[int] = Field(default=None, description="Workflow timeout")
+    # Status
+    status = Column(String(50), default="pending", nullable=False)
+    # Statuses: pending, approved, rejected, escalated
     
-    # Initial inputs
-    inputs: Dict[str, Any] = Field(default_factory=dict, description="Initial workflow inputs")
+    # Approver
+    approver_id = Column(UUID(as_uuid=True), ForeignKey("profiles.id"), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
     
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "workflow_type": "hiring_process",
-                "name": "Complete Hiring Process - Senior Engineer",
-                "description": "Full hiring workflow for senior engineer position",
-                "entity_id": "770e8400-e29b-41d4-a716-446655440002",
-                "entity_type": "job",
-                "created_by": "550e8400-e29b-41d4-a716-446655440000",
-                "inputs": {
-                    "job_title": "Senior Full Stack Engineer",
-                    "auto_screening": True,
-                    "ai_interviews": True
-                }
-            }
-        }
-    }
-
-
-class WorkflowUpdate(BaseUpdate):
-    """Model for updating workflow information"""
-    name: Optional[str] = Field(default=None, description="Workflow name")
-    description: Optional[str] = Field(default=None, description="Workflow description")
+    # Approval data
+    comments = Column(Text, nullable=True)
+    approval_data = Column(JSONB, default=dict, nullable=False)
     
-    status: Optional[WorkflowStatus] = Field(default=None, description="Workflow status")
-    assigned_to: Optional[UUID] = Field(default=None, description="User assigned to handle clarifications")
+    # Escalation
+    escalated_to = Column(UUID(as_uuid=True), ForeignKey("profiles.id"), nullable=True)
+    escalated_at = Column(DateTime, nullable=True)
+    escalation_reason = Column(Text, nullable=True)
     
-    steps: Optional[List[WorkflowStep]] = Field(default=None, description="Updated workflow steps")
-    clarifications: Optional[List[Clarification]] = Field(default=None, description="Updated clarifications")
-    
-    outputs: Optional[Dict[str, Any]] = Field(default=None, description="Workflow outputs")
-    final_result: Optional[Dict[str, Any]] = Field(default=None, description="Final workflow result")
-    
-    error_message: Optional[str] = Field(default=None, description="Error message")
-    error_details: Optional[Dict[str, Any]] = Field(default=None, description="Error details")
-    
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "status": "paused",
-                "assigned_to": "550e8400-e29b-41d4-a716-446655440000",
-                "error_message": "Waiting for human approval"
-            }
-        }
-    }
-
-
-class WorkflowSearch(BaseCreate):
-    """Model for workflow search parameters"""
-    workflow_type: Optional[WorkflowType] = Field(default=None, description="Filter by workflow type")
-    status: Optional[WorkflowStatus] = Field(default=None, description="Filter by status")
-    
-    entity_id: Optional[UUID] = Field(default=None, description="Filter by entity ID")
-    entity_type: Optional[EntityType] = Field(default=None, description="Filter by entity type")
-    
-    created_by: Optional[UUID] = Field(default=None, description="Filter by creator")
-    assigned_to: Optional[UUID] = Field(default=None, description="Filter by assignee")
-    
-    has_clarifications: Optional[bool] = Field(default=None, description="Filter workflows with pending clarifications")
-    
-    created_from: Optional[str] = Field(default=None, description="Filter by creation date (from)")
-    created_to: Optional[str] = Field(default=None, description="Filter by creation date (to)")
-    
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "workflow_type": "hiring_process",
-                "status": "running",
-                "has_clarifications": True,
-                "created_from": "2025-01-20"
-            }
-        }
-    }
-
-
-class ClarificationResponse(BaseCreate):
-    """Model for responding to workflow clarifications"""
-    clarification_id: str = Field(description="Clarification identifier")
-    response: Any = Field(description="Response to the clarification")
-    notes: Optional[str] = Field(default=None, description="Additional notes")
-    
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "clarification_id": "approve_offer",
-                "response": True,
-                "notes": "Approved with standard benefits package"
-            }
-        }
-    }
-
-
-class PlanRunCreate(BaseModel):
-    """Model for creating a new plan run"""
-    job_data: Dict[str, Any] = Field(..., description="Job information and requirements")
-    hr_user_id: str = Field(..., description="HR user ID for end user context")
-    workflow_type: Optional[WorkflowType] = Field(WorkflowType.HIRING_AUTOMATION, description="Type of workflow to create")
-
-class PlanRunUpdate(BaseModel):
-    """Model for updating a plan run"""
-    status: Optional[WorkflowStatus] = Field(None, description="New status for the plan run")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata for the plan run")
-
-class PlanRunResponse(BaseModel):
-    """Model for plan run responses"""
-    id: str = Field(..., description="Plan run ID")
-    status: str = Field(..., description="Current status of the plan run")
-    workflow_type: str = Field(..., description="Type of workflow")
-    job_title: Optional[str] = Field(None, description="Job title for hiring workflows")
-    email_monitored: Optional[str] = Field(None, description="Email address being monitored")
-    keywords_used: Optional[List[str]] = Field(None, description="Keywords used for email search")
-    candidate_name: Optional[str] = Field(None, description="Candidate name for interview workflows")
-    interview_type: Optional[str] = Field(None, description="Type of interview being scheduled")
-    scheduled_at: Optional[str] = Field(None, description="When the interview was scheduled")
-    created_at: Optional[str] = Field(None, description="When the plan run was created")
-    updated_at: Optional[str] = Field(None, description="When the plan run was last updated")
-
-class PlanRunListResponse(BaseModel):
-    """Model for listing plan runs"""
-    items: List[PlanRunResponse] = Field(..., description="List of plan runs")
-    total: int = Field(..., description="Total number of plan runs")
-    page: int = Field(..., description="Current page number")
-    size: int = Field(..., description="Page size")
-
-class WorkflowMetrics(BaseModel):
-    """Model for workflow metrics"""
-    total_workflows: int = Field(..., description="Total number of workflows")
-    active_workflows: int = Field(..., description="Number of active workflows")
-    completed_workflows: int = Field(..., description="Number of completed workflows")
-    failed_workflows: int = Field(..., description="Number of failed workflows")
-    average_completion_time: Optional[Decimal] = Field(None, description="Average time to complete workflows")
-    success_rate: Optional[Decimal] = Field(None, description="Success rate of workflows")
+    # Relationships
+    workflow_execution = relationship("WorkflowExecution", back_populates="approvals")
+    step_execution = relationship("WorkflowStepExecution")
+    required_role = relationship("UserRole")
+    approver = relationship("Profile", foreign_keys=[approver_id], back_populates="workflow_approvals")
+    escalated_user = relationship("Profile", foreign_keys=[escalated_to])
