@@ -12,6 +12,7 @@ from schemas.workflow import (
     WorkflowStepResponse, 
     WorkflowTemplateResponse, 
     WorkflowTemplateCreate,
+    WorkflowTemplateCreateWithSteps,
     WorkflowStepDetailResponse,
     CandidateWorkflowResponse
 )
@@ -118,6 +119,62 @@ async def create_workflow_template(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create workflow template: {str(e)}"
+        )
+
+@router.post("/templates/with-steps", response_model=WorkflowTemplateResponse)
+async def create_workflow_template_with_steps(
+    template_data: WorkflowTemplateCreateWithSteps,
+    db: AsyncSession = Depends(get_db),
+    current_user: Profile = Depends(get_current_user)
+):
+    """Create a new workflow template with step details"""
+    try:
+        # Create WorkflowStepDetail records first
+        step_detail_ids = []
+        
+        for step in template_data.steps:
+            # Create WorkflowStepDetail record
+            step_detail = WorkflowStepDetail(
+                workflow_step_id=step.workflow_step_id,
+                delay_in_seconds=step.delay_in_seconds,
+                auto_start=step.auto_start,
+                required_human_approval=step.required_human_approval,
+                number_of_approvals_needed=step.number_of_approvals_needed,
+                order_number=step.order_number,
+                status="awaiting"
+            )
+            
+            db.add(step_detail)
+            await db.flush()  # Flush to get the ID without committing
+            step_detail_ids.append(step_detail.id)
+        
+        # Create workflow template with step detail IDs
+        new_template = WorkflowTemplate(
+            name=template_data.name,
+            description=template_data.description,
+            category=template_data.category,
+            steps_execution_id=step_detail_ids
+        )
+        
+        db.add(new_template)
+        await db.commit()
+        await db.refresh(new_template)
+        
+        return WorkflowTemplateResponse(
+            id=new_template.id,
+            name=new_template.name,
+            description=new_template.description,
+            category=new_template.category,
+            steps_execution_id=new_template.steps_execution_id,
+            created_at=new_template.created_at,
+            updated_at=new_template.updated_at
+        )
+        
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create workflow template with steps: {str(e)}"
         )
 
 @router.get("/steps/{step_id}", response_model=WorkflowStepResponse)

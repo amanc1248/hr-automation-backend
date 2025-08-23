@@ -46,6 +46,22 @@ class WorkflowTemplateCreate(BaseModel):
     category: str = Field(..., min_length=1, max_length=100)
     steps_execution_id: List[UUID] = Field(default_factory=list)
 
+class WorkflowStepForTemplate(BaseModel):
+    """Schema for workflow steps when creating templates"""
+    workflow_step_id: UUID  # Reference to existing workflow_step
+    delay_in_seconds: Optional[int] = Field(None, ge=0)
+    auto_start: bool = False
+    required_human_approval: bool = False
+    number_of_approvals_needed: Optional[int] = Field(None, ge=1)
+    order_number: int = Field(..., ge=1)
+
+class WorkflowTemplateCreateWithSteps(BaseModel):
+    """Schema for creating workflow templates with step details"""
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    category: str = Field(..., min_length=1, max_length=100)
+    steps: List[WorkflowStepForTemplate] = Field(default_factory=list)
+
 class WorkflowStepDetailResponse(BaseModel):
     """Response schema for workflow step details"""
     id: UUID
