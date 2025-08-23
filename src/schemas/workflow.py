@@ -39,6 +39,41 @@ class WorkflowTemplateResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class WorkflowStepDetailPopulated(BaseModel):
+    """Populated workflow step detail with workflow step info"""
+    id: UUID
+    workflow_step_id: UUID
+    delay_in_seconds: Optional[int] = None
+    auto_start: bool = False
+    required_human_approval: bool = False
+    number_of_approvals_needed: Optional[int] = None
+    status: str = "awaiting"
+    order_number: int
+    created_at: datetime
+    updated_at: datetime
+    
+    # Populated workflow step info
+    workflow_step: WorkflowStepResponse
+
+    class Config:
+        from_attributes = True
+
+class WorkflowTemplatePopulated(BaseModel):
+    """Populated workflow template with step details"""
+    id: UUID
+    name: str
+    description: Optional[str] = None
+    category: str
+    steps_execution_id: List[UUID] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+    
+    # Populated step details
+    step_details: List[WorkflowStepDetailPopulated] = Field(default_factory=list)
+
+    class Config:
+        from_attributes = True
+
 class WorkflowTemplateCreate(BaseModel):
     """Schema for creating workflow templates"""
     name: str = Field(..., min_length=1, max_length=255)
