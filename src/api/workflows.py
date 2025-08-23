@@ -1,0 +1,123 @@
+"""
+Workflow API endpoints
+"""
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from typing import List
+
+from core.database import get_db
+from models.workflow import WorkflowStep, WorkflowTemplate, WorkflowStepDetail, CandidateWorkflow
+from schemas.workflow import (
+    WorkflowStepResponse, 
+    WorkflowTemplateResponse, 
+    WorkflowStepDetailResponse,
+    CandidateWorkflowResponse
+)
+from api.auth import get_current_user
+from models.user import Profile
+
+router = APIRouter(prefix="/api/workflows", tags=["workflows"])
+
+@router.get("/steps", response_model=List[WorkflowStepResponse])
+async def get_workflow_steps(
+    db: AsyncSession = Depends(get_db),
+    current_user: Profile = Depends(get_current_user)
+):
+    """Get all available workflow steps"""
+    try:
+        # Fetch all workflow steps that are not deleted
+        result = await db.execute(
+            select(WorkflowStep).where(WorkflowStep.is_deleted == False)
+        )
+        workflow_steps = result.scalars().all()
+        
+        return [
+            WorkflowStepResponse(
+                id=step.id,
+                name=step.name,
+                description=step.description,
+                step_type=step.step_type,
+                actions=step.actions,
+                created_at=step.created_at,
+                updated_at=step.updated_at
+            )
+            for step in workflow_steps
+        ]
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch workflow steps: {str(e)}"
+        )
+
+@router.get("/templates", response_model=List[WorkflowTemplateResponse])
+async def get_workflow_templates(
+    db: AsyncSession = Depends(get_db),
+    current_user: Profile = Depends(get_current_user)
+):
+    """Get all workflow templates"""
+    try:
+        result = await db.execute(
+            select(WorkflowTemplate).where(WorkflowTemplate.is_deleted == False)
+        )
+        templates = result.scalars().all()
+        
+        return [
+            WorkflowTemplateResponse(
+                id=template.id,
+                name=template.name,
+                description=template.description,
+                category=template.category,
+                steps_execution_id=template.steps_execution_id,
+                created_at=template.created_at,
+                updated_at=template.updated_at
+            )
+            for template in templates
+        ]
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch workflow templates: {str(e)}"
+        )
+
+@router.get("/steps/{step_id}", response_model=WorkflowStepResponse)
+async def get_workflow_step(
+    step_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: Profile = Depends(get_current_user)
+):
+    """Get a specific workflow step by ID"""
+    try:
+        result = await db.execute(
+            select(WorkflowStep).where(
+                WorkflowStep.id == step_id,
+                WorkflowStep.is_deleted == False
+            )
+        )
+        step = result.scalar_one_or_none()
+        
+        if not step:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Workflow step not found"
+            )
+        
+        return WorkflowStepResponse(
+            id=step.id,
+            name=step.name,
+            description=step.description,
+            step_type=step.step_type,
+            actions=step.actions,
+            created_at=step.created_at,
+            updated_at=step.updated_at
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch workflow step: {str(e)}"
+        )
