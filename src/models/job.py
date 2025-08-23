@@ -26,7 +26,7 @@ class Job(BaseModel):
     
     # Status and workflow
     status = Column(String(50), default="draft", nullable=False)  # draft, active, paused, closed
-    workflow_template_id = Column(UUID(as_uuid=True), ForeignKey("workflow_templates.id"), nullable=True)
+    workflow_template_id = Column(UUID(as_uuid=True), ForeignKey("workflow_template.id"), nullable=True)
     
     # Company and ownership
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
@@ -45,10 +45,11 @@ class Job(BaseModel):
     company = relationship("Company", back_populates="jobs")
     creator = relationship("Profile", foreign_keys=[created_by], back_populates="created_jobs")
     assignee = relationship("Profile", foreign_keys=[assigned_to], back_populates="assigned_jobs")
-    workflow_template = relationship("WorkflowTemplate", back_populates="jobs")
+    workflow_template = relationship("WorkflowTemplate")
     applications = relationship("Application", back_populates="job", cascade="all, delete-orphan")
     interviews = relationship("Interview", back_populates="job", cascade="all, delete-orphan")
     requirements_list = relationship("JobRequirement", back_populates="job", cascade="all, delete-orphan")
+    candidate_workflows = relationship("CandidateWorkflow", back_populates="job", cascade="all, delete-orphan")
 
 class JobRequirement(BaseModel):
     """Job requirements model"""

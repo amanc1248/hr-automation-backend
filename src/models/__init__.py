@@ -4,7 +4,7 @@ from .user import User, Company, Profile, UserRole, UserInvitation
 from .job import Job, JobRequirement
 from .candidate import Candidate, Application
 from .interview import Interview, AIInterviewConfig
-from .workflow import WorkflowTemplate, WorkflowStep, WorkflowExecution, WorkflowStepExecution, WorkflowApproval
+from .workflow import WorkflowTemplate, WorkflowStep, WorkflowStepDetail, CandidateWorkflow
 from .email import EmailAccount, EmailTemplate, EmailMonitoring
 
 __all__ = [
@@ -13,6 +13,6 @@ __all__ = [
     "Job", "JobRequirement",
     "Candidate", "Application", 
     "Interview", "AIInterviewConfig",
-    "WorkflowTemplate", "WorkflowStep", "WorkflowExecution", "WorkflowStepExecution", "WorkflowApproval",
+    "WorkflowTemplate", "WorkflowStep", "WorkflowStepDetail", "CandidateWorkflow",
     "EmailAccount", "EmailTemplate", "EmailMonitoring"
 ]

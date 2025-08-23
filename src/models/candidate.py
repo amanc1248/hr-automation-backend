@@ -48,6 +48,7 @@ class Candidate(BaseModelWithSoftDelete):
     # Relationships
     applications = relationship("Application", back_populates="candidate", cascade="all, delete-orphan")
     interviews = relationship("Interview", back_populates="candidate", cascade="all, delete-orphan")
+    candidate_workflows = relationship("CandidateWorkflow", back_populates="candidate", cascade="all, delete-orphan")
 
 class Application(BaseModel):
     """Job application model"""
@@ -66,7 +67,6 @@ class Application(BaseModel):
     application_data = Column(JSONB, default=dict, nullable=False)  # Custom form fields
     
     # Workflow tracking
-    workflow_execution_id = Column(UUID(as_uuid=True), ForeignKey("workflow_executions.id"), nullable=True)
     current_stage = Column(String(100), nullable=True)
     
     # Scoring and evaluation
@@ -88,7 +88,5 @@ class Application(BaseModel):
     # Relationships
     job = relationship("Job", back_populates="applications")
     candidate = relationship("Candidate", back_populates="applications")
-    # One-to-one relationship: one application can have one workflow execution
-    workflow_execution = relationship("WorkflowExecution", foreign_keys=[workflow_execution_id], uselist=False)
     referrer = relationship("Profile")
     interviews = relationship("Interview", back_populates="application", cascade="all, delete-orphan")
