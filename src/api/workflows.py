@@ -62,9 +62,12 @@ async def get_workflow_templates(
 ):
     """Get all workflow templates with populated step details"""
     try:
-        # Get all templates
+        # Get templates for the current user's company only
         result = await db.execute(
-            select(WorkflowTemplate).where(WorkflowTemplate.is_deleted == False)
+            select(WorkflowTemplate).where(
+                WorkflowTemplate.is_deleted == False,
+                WorkflowTemplate.company_id == current_user.company_id
+            )
         )
         templates = result.scalars().all()
         
@@ -146,6 +149,7 @@ async def create_workflow_template(
             name=template_data.name,
             description=template_data.description,
             category=template_data.category,
+            company_id=current_user.company_id,
             steps_execution_id=template_data.steps_execution_id
         )
         
@@ -202,6 +206,7 @@ async def create_workflow_template_with_steps(
             name=template_data.name,
             description=template_data.description,
             category=template_data.category,
+            company_id=current_user.company_id,
             steps_execution_id=step_detail_ids
         )
         
@@ -235,11 +240,12 @@ async def update_workflow_template(
 ):
     """Update an existing workflow template with step details"""
     try:
-        # Get existing template
+        # Get existing template and verify company ownership
         result = await db.execute(
             select(WorkflowTemplate).where(
                 WorkflowTemplate.id == template_id,
-                WorkflowTemplate.is_deleted == False
+                WorkflowTemplate.is_deleted == False,
+                WorkflowTemplate.company_id == current_user.company_id
             )
         )
         template = result.scalar_one_or_none()
@@ -312,11 +318,12 @@ async def delete_workflow_template(
 ):
     """Delete a workflow template and its step details"""
     try:
-        # Get existing template
+        # Get existing template and verify company ownership
         result = await db.execute(
             select(WorkflowTemplate).where(
                 WorkflowTemplate.id == template_id,
-                WorkflowTemplate.is_deleted == False
+                WorkflowTemplate.is_deleted == False,
+                WorkflowTemplate.company_id == current_user.company_id
             )
         )
         template = result.scalar_one_or_none()

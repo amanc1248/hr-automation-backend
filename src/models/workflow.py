@@ -11,6 +11,7 @@ class WorkflowTemplate(BaseModel):
     name = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
     category = Column(Text, nullable=False)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
     steps_execution_id = Column(ARRAY(UUID(as_uuid=True)), nullable=False, default=list)
     is_deleted = Column(Boolean, default=False, nullable=False)
     
