@@ -11,6 +11,7 @@ from models.workflow import WorkflowStep, WorkflowTemplate, WorkflowStepDetail, 
 from schemas.workflow import (
     WorkflowStepResponse, 
     WorkflowTemplateResponse, 
+    WorkflowTemplateCreate,
     WorkflowStepDetailResponse,
     CandidateWorkflowResponse
 )
@@ -80,6 +81,43 @@ async def get_workflow_templates(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch workflow templates: {str(e)}"
+        )
+
+@router.post("/templates", response_model=WorkflowTemplateResponse)
+async def create_workflow_template(
+    template_data: WorkflowTemplateCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: Profile = Depends(get_current_user)
+):
+    """Create a new workflow template"""
+    try:
+        # Create new workflow template
+        new_template = WorkflowTemplate(
+            name=template_data.name,
+            description=template_data.description,
+            category=template_data.category,
+            steps_execution_id=template_data.steps_execution_id
+        )
+        
+        db.add(new_template)
+        await db.commit()
+        await db.refresh(new_template)
+        
+        return WorkflowTemplateResponse(
+            id=new_template.id,
+            name=new_template.name,
+            description=new_template.description,
+            category=new_template.category,
+            steps_execution_id=new_template.steps_execution_id,
+            created_at=new_template.created_at,
+            updated_at=new_template.updated_at
+        )
+        
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create workflow template: {str(e)}"
         )
 
 @router.get("/steps/{step_id}", response_model=WorkflowStepResponse)
