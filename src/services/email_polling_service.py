@@ -562,10 +562,30 @@ class EmailPollingService:
             return None
     
     async def _create_application(self, db: AsyncSession, job_id: str, candidate_id: str, email: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Create an application record"""
+        """Create an application record (or return existing one)"""
         try:
+            from sqlalchemy import select
             from models.candidate import Application
             
+            # Check if application already exists for this job_id + candidate_id combination
+            result = await db.execute(
+                select(Application).where(
+                    Application.job_id == job_id,
+                    Application.candidate_id == candidate_id
+                )
+            )
+            existing_application = result.scalar_one_or_none()
+            
+            if existing_application:
+                logger.info(f"   ✅ Application already exists for this job/candidate combination")
+                return {
+                    "id": existing_application.id,
+                    "status": existing_application.status,
+                    "applied_at": existing_application.applied_at
+                }
+            
+            # Create new application
+            logger.info(f"   🆕 Creating new application for job/candidate combination")
             new_application = Application(
                 job_id=job_id,
                 candidate_id=candidate_id,

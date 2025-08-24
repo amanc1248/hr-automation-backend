@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, Text, ForeignKey, DateTime, Integer, Numeric
+from sqlalchemy import Column, String, Boolean, Text, ForeignKey, DateTime, Integer, Numeric, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from .base import BaseModel, BaseModelWithSoftDelete
@@ -60,6 +60,11 @@ class Application(BaseModel):
     
     job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id"), nullable=False)
     candidate_id = Column(UUID(as_uuid=True), ForeignKey("candidates.id"), nullable=False)
+    
+    # Ensure one application per job/candidate combination
+    __table_args__ = (
+        UniqueConstraint('job_id', 'candidate_id', name='uq_application_job_candidate'),
+    )
     
     # Application details
     status = Column(String(50), default="applied", nullable=False)
