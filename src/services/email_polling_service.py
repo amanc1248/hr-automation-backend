@@ -363,25 +363,35 @@ class EmailPollingService:
                 logger.info(f"   💡 Make sure the job '{job_title}' exists in the system before candidates apply")
                 return
             
-            # 5. Find or create candidate
-            candidate = await self._find_or_create_candidate(db, candidate_info)
+            # 5. Get company_id from the job
+            company_id = await self._get_company_id_from_job(db, job['id'])
+            if not company_id:
+                logger.warning(f"   ⚠️ Could not determine company_id for job: {job['id']}")
+                return
+            
+            # 6. Find or create candidate with company_id
+            candidate = await self._find_or_create_candidate(db, candidate_info, company_id)
             if candidate:
                 logger.info(f"   👤 Candidate found/created: {candidate['id']} - {candidate['email']}")
             else:
                 logger.warning(f"   ⚠️ Could not find/create candidate for: {candidate_info['email']}")
                 return
             
-            # 6. Create application record
+            # 7. Create application record
             application = await self._create_application(db, job['id'], candidate['id'], email)
             logger.info(f"   📝 Application created: {application['id']}")
             
-            # 7. Start workflow instance
+            # 8. Commit candidate and application creation first
+            await db.commit()
+            logger.info(f"   💾 Committed candidate and application to database")
+            
+            # 9. Start workflow instance (this is optional - if it fails, candidate and application are still saved)
             workflow_instance = await self._start_candidate_workflow(db, job['id'], candidate['id'], email)
             if workflow_instance:
                 logger.info(f"   🔄 Workflow started: {workflow_instance['id']}")
                 logger.info(f"✅ Complete workflow initiated for candidate {candidate['email']} applying to {job['title']}")
             else:
-                logger.warning(f"   ⚠️ Failed to start workflow")
+                logger.warning(f"   ⚠️ Failed to start workflow, but candidate and application were saved successfully")
             
         except Exception as e:
             logger.error(f"Error starting workflow: {e}")
@@ -484,22 +494,40 @@ class EmailPollingService:
             logger.error(f"Error finding job: {e}")
             return None
     
-    async def _find_or_create_candidate(self, db: AsyncSession, candidate_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def _get_company_id_from_job(self, db: AsyncSession, job_id: str) -> Optional[str]:
+        """Get company_id from job"""
+        try:
+            from sqlalchemy import select
+            from models.job import Job
+            
+            result = await db.execute(
+                select(Job.company_id).where(Job.id == job_id)
+            )
+            company_id = result.scalar_one_or_none()
+            return str(company_id) if company_id else None
+            
+        except Exception as e:
+            logger.error(f"Error getting company_id from job: {e}")
+            return None
+    
+    async def _find_or_create_candidate(self, db: AsyncSession, candidate_info: Dict[str, Any], company_id: str) -> Optional[Dict[str, Any]]:
         """Find existing candidate or create a new one"""
         try:
             from sqlalchemy import select
             from models.candidate import Candidate
             
-            # Try to find existing candidate by email
+            # Try to find existing candidate by email and company
             result = await db.execute(
                 select(Candidate).where(
                     Candidate.email == candidate_info["email"],
+                    Candidate.company_id == company_id,
                     Candidate.is_deleted == False
                 )
             )
             existing_candidate = result.scalar_one_or_none()
             
             if existing_candidate:
+                logger.info(f"   ✅ Found existing candidate: {existing_candidate.email}")
                 return {
                     "id": existing_candidate.id,
                     "email": existing_candidate.email,
@@ -508,10 +536,12 @@ class EmailPollingService:
                 }
             
             # Create new candidate
+            logger.info(f"   🆕 Creating new candidate: {candidate_info['email']}")
             new_candidate = Candidate(
                 first_name=candidate_info["first_name"],
                 last_name=candidate_info["last_name"],
                 email=candidate_info["email"],
+                company_id=company_id,
                 source=candidate_info["source"],
                 source_details=candidate_info["source_details"],
                 status="new"
@@ -608,9 +638,7 @@ class EmailPollingService:
             
             db.add(workflow_instance)
             await db.flush()
-            
-            # Commit all changes
-            await db.commit()
+            await db.commit()  # Commit the workflow instance
             
             return {
                 "id": workflow_instance.id,

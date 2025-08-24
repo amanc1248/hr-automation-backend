@@ -21,6 +21,7 @@ class Company(BaseModel):
     # Relationships
     profiles = relationship("Profile", back_populates="company", cascade="all, delete-orphan")
     jobs = relationship("Job", back_populates="company", cascade="all, delete-orphan")
+    candidates = relationship("Candidate", back_populates="company", cascade="all, delete-orphan")
     email_accounts = relationship("EmailAccount", back_populates="company", cascade="all, delete-orphan")
 
 class UserRole(BaseModel):

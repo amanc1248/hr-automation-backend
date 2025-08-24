@@ -42,10 +42,14 @@ class Candidate(BaseModelWithSoftDelete):
     source = Column(String(100), nullable=True)  # linkedin, referral, website, etc.
     source_details = Column(JSONB, default=dict, nullable=False)
     
+    # Company association
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
+    
     # Status
     status = Column(String(50), default="new", nullable=False)  # new, reviewing, qualified, rejected
     
     # Relationships
+    company = relationship("Company", back_populates="candidates")
     applications = relationship("Application", back_populates="candidate", cascade="all, delete-orphan")
     interviews = relationship("Interview", back_populates="candidate", cascade="all, delete-orphan")
     candidate_workflows = relationship("CandidateWorkflow", back_populates="candidate", cascade="all, delete-orphan")
