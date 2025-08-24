@@ -848,48 +848,33 @@ class EmailPollingService:
             logger.info(f"   🤖 Executing with Portia...")
             logger.info(f"   📋 Step Description: {step_description}")
             
-            # For now, let's create a simple mock response until we implement the actual Portia tools
-            # This will help us test the workflow execution flow
+            # Import the Portia service
+            from services.portia_service import portia_service
             
-            step_name = context_data["step"]["name"].lower()
+            # Execute the step using Portia
+            result = await portia_service.execute_workflow_step(step_description, context_data)
             
-            # Mock different responses based on step type
-            if "resume" in step_name or "analysis" in step_name:
-                mock_result = {
-                    "success": True,
-                    "data": "Resume analyzed successfully. Candidate has relevant experience in full-stack development.",
-                    "status": "approved"
-                }
-            elif "technical" in step_name or "assignment" in step_name:
-                mock_result = {
-                    "success": True,
-                    "data": "Technical assignment sent to candidate via email.",
-                    "status": "approved"
-                }
-            elif "interview" in step_name:
-                mock_result = {
-                    "success": True,
-                    "data": "Interview scheduled for next week.",
-                    "status": "approved"
-                }
+            if result:
+                logger.info(f"   🎯 Portia Result: {result.get('status', 'unknown')} - {result.get('data', 'No details')[:100]}...")
+                return result
             else:
-                mock_result = {
-                    "success": True,
-                    "data": f"Step '{context_data['step']['name']}' executed successfully.",
-                    "status": "approved"
+                logger.error(f"   ❌ Portia execution returned no result")
+                # Return fallback result
+                return {
+                    "success": False,
+                    "data": "Portia execution failed - no result returned",
+                    "status": "approved"  # Still proceed with workflow
                 }
-            
-            logger.info(f"   🎯 Mock Portia Result: {mock_result}")
-            
-            # TODO: Replace this with actual Portia integration
-            # portia_client = PortiaClient()
-            # result = await portia_client.execute_step(step_description, context_data)
-            
-            return mock_result
             
         except Exception as e:
             logger.error(f"Error executing step with Portia: {e}")
-            return None
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            return {
+                "success": False,
+                "data": f"Portia execution error: {str(e)}",
+                "status": "approved"  # Still proceed with workflow
+            }
             
     async def _update_tokens_in_db(self, config_id: str, new_tokens: Dict[str, Any]):
         """Update tokens in the database after refresh"""

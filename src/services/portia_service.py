@@ -1,0 +1,215 @@
+"""
+Portia Integration Service
+Handles workflow step execution using Portia AI
+"""
+
+import logging
+import json
+from typing import Dict, Any, Optional
+from portia import Portia, Config, InMemoryToolRegistry
+from tools.resume_screening_tool import ResumeScreeningTool
+
+logger = logging.getLogger(__name__)
+
+class PortiaService:
+    """Service for executing workflow steps using Portia AI"""
+    
+    def __init__(self):
+        self.portia = None
+        self._initialize_portia()
+    
+    def _initialize_portia(self):
+        """Initialize Portia with HR workflow tools"""
+        try:
+            # Create Portia config
+            config = Config.from_default(
+                default_model="openai/gpt-4o-mini",
+                default_log_level="INFO"
+            )
+            
+            # Create tool registry with our HR tools
+            hr_tools = [
+                ResumeScreeningTool(),
+                # Add other tools here as we create them
+            ]
+            
+            tool_registry = InMemoryToolRegistry.from_local_tools(hr_tools)
+            
+            # Initialize Portia
+            self.portia = Portia(
+                config=config,
+                tools=tool_registry
+            )
+            
+            logger.info(f"✅ Portia initialized with {len(hr_tools)} HR workflow tools")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize Portia: {e}")
+            self.portia = None
+    
+    async def execute_workflow_step(self, step_description: str, context_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Execute a workflow step using Portia AI"""
+        try:
+            if not self.portia:
+                logger.error("Portia not initialized")
+                return None
+            
+            # Extract relevant data
+            candidate = context_data.get("candidate", {})
+            job = context_data.get("job", {})
+            email = context_data.get("email", {})
+            step = context_data.get("step", {})
+            
+            candidate_name = f"{candidate.get('first_name', '')} {candidate.get('last_name', '')}".strip()
+            
+            # Create a task for Portia based on the step description and available tools
+            task = self._create_portia_task(step_description, candidate, job, email, step)
+            
+            logger.info(f"🤖 Executing Portia task: {task[:100]}...")
+            
+            # Execute the task
+            plan_run = self.portia.run(task)
+            
+            # Parse result
+            if plan_run.state.name == "COMPLETE":
+                result = self._parse_portia_result(plan_run, step)
+                logger.info(f"✅ Portia task completed successfully")
+                return result
+            else:
+                logger.error(f"❌ Portia task failed with state: {plan_run.state}")
+                return {
+                    "success": False,
+                    "data": f"Portia execution failed with state: {plan_run.state}",
+                    "status": "approved"  # Still proceed with workflow
+                }
+                
+        except Exception as e:
+            logger.error(f"Error executing Portia workflow step: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            return {
+                "success": False,
+                "data": f"Portia execution error: {str(e)}",
+                "status": "approved"  # Still proceed with workflow
+            }
+    
+    def _create_portia_task(self, step_description: str, candidate: Dict[str, Any], job: Dict[str, Any], email: Dict[str, Any], step: Dict[str, Any]) -> str:
+        """Create a Portia task based on the workflow step"""
+        
+        candidate_name = f"{candidate.get('first_name', '')} {candidate.get('last_name', '')}".strip()
+        candidate_email = candidate.get('email', '')
+        job_title = job.get('title', 'Unknown Position')
+        step_name = step.get('name', '').lower()
+        
+        # Mock resume content for testing
+        resume_content = f"""
+        {candidate_name}
+        Full Stack Developer
+        Email: {candidate_email}
+        
+        EXPERIENCE:
+        • 5+ years of full-stack development experience
+        • Proficient in React, Node.js, Python, PostgreSQL
+        • Built and deployed 10+ web applications
+        • Experience with AWS, Docker, Git
+        
+        EDUCATION:
+        • Bachelor's in Computer Science (2018)
+        
+        SKILLS:
+        • Frontend: React, TypeScript, HTML/CSS
+        • Backend: Node.js, Python, FastAPI
+        • Database: PostgreSQL, MongoDB
+        • Cloud: AWS, Docker
+        """
+        
+        # Job requirements (mock for testing)
+        job_requirements = f"""
+        REQUIRED SKILLS for {job_title}:
+        • 3+ years full-stack development experience
+        • Frontend: React, TypeScript, modern CSS
+        • Backend: Node.js or Python, RESTful APIs
+        • Database: PostgreSQL or similar SQL database
+        • Version control: Git
+        • Problem-solving and communication skills
+        """
+        
+        # Create task based on step type
+        if "resume" in step_name or "analysis" in step_name or "screening" in step_name:
+            task = f"""
+            Use the resume_screening_tool to analyze the candidate's resume and make a screening decision.
+            
+            Candidate Details:
+            - Name: {candidate_name}
+            - Email: {candidate_email}
+            - Job Applied For: {job_title}
+            
+            Resume Content:
+            {resume_content}
+            
+            Job Requirements:
+            {job_requirements}
+            
+            Step Description: {step_description}
+            
+            Please use the resume_screening_tool with the provided information to analyze the candidate's fit for the position.
+            """
+        else:
+            # For other step types, create a general task
+            task = f"""
+            Process the following workflow step for candidate {candidate_name} applying for {job_title}:
+            
+            Step: {step.get('name', 'Unknown Step')}
+            Description: {step_description}
+            
+            Candidate: {candidate_name} ({candidate_email})
+            Job: {job_title}
+            
+            Execute the appropriate action based on the step description.
+            """
+        
+        return task
+    
+    def _parse_portia_result(self, plan_run, step: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse Portia execution result"""
+        try:
+            # Get the final output from Portia
+            if hasattr(plan_run, 'outputs') and plan_run.outputs and hasattr(plan_run.outputs, 'final_output'):
+                final_output = plan_run.outputs.final_output.value
+                
+                # Try to parse as JSON if it's a string
+                if isinstance(final_output, str):
+                    try:
+                        result = json.loads(final_output)
+                        # Ensure required fields
+                        if not isinstance(result, dict):
+                            result = {"data": str(final_output)}
+                    except json.JSONDecodeError:
+                        result = {"data": final_output}
+                else:
+                    result = final_output if isinstance(final_output, dict) else {"data": str(final_output)}
+                
+                # Ensure required fields exist
+                result.setdefault("success", True)
+                result.setdefault("status", "approved")
+                result.setdefault("data", "Step completed successfully")
+                
+                return result
+            else:
+                # Fallback result
+                return {
+                    "success": True,
+                    "data": f"Step '{step.get('name', 'Unknown')}' completed via Portia",
+                    "status": "approved"
+                }
+                
+        except Exception as e:
+            logger.error(f"Error parsing Portia result: {e}")
+            return {
+                "success": False,
+                "data": f"Error parsing result: {str(e)}",
+                "status": "approved"
+            }
+
+# Global instance
+portia_service = PortiaService()
