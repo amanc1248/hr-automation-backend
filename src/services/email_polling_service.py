@@ -335,16 +335,294 @@ class EmailPollingService:
         try:
             logger.info(f"🚀 Starting workflow for job application email")
             
-            # TODO: Implement workflow logic here
-            # 1. Parse email content and attachments
-            # 2. Extract candidate information
-            # 3. Create candidate record
-            # 4. Start the appropriate workflow
+            # 1. Extract email metadata
+            headers = email.get('payload', {}).get('headers', [])
+            subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'No Subject')
+            from_email = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown')
+            date = next((h['value'] for h in headers if h['name'] == 'Date'), 'Unknown')
             
-            logger.info(f"✅ Workflow started for email from {email_address}")
+            logger.info(f"📋 Processing job application:")
+            logger.info(f"   📧 Subject: {subject}")
+            logger.info(f"   👤 From: {from_email}")
+            logger.info(f"   📅 Date: {date}")
+            
+            # 2. Extract job information from subject
+            job_title = self._extract_job_title_from_subject(subject)
+            logger.info(f"   💼 Extracted job title: {job_title}")
+            
+            # 3. Parse candidate information from email
+            candidate_info = self._parse_candidate_info_from_email(from_email, email)
+            logger.info(f"   👥 Candidate info: {candidate_info}")
+            
+            # 4. Find existing job (jobs must be created beforehand by HR/recruiters)
+            job = await self._find_existing_job(db, job_title)
+            if job:
+                logger.info(f"   🎯 Job found: {job['id']} - {job['title']}")
+            else:
+                logger.warning(f"   ⚠️ No existing job found for title: {job_title}")
+                logger.info(f"   💡 Make sure the job '{job_title}' exists in the system before candidates apply")
+                return
+            
+            # 5. Find or create candidate
+            candidate = await self._find_or_create_candidate(db, candidate_info)
+            if candidate:
+                logger.info(f"   👤 Candidate found/created: {candidate['id']} - {candidate['email']}")
+            else:
+                logger.warning(f"   ⚠️ Could not find/create candidate for: {candidate_info['email']}")
+                return
+            
+            # 6. Create application record
+            application = await self._create_application(db, job['id'], candidate['id'], email)
+            logger.info(f"   📝 Application created: {application['id']}")
+            
+            # 7. Start workflow instance
+            workflow_instance = await self._start_candidate_workflow(db, job['id'], candidate['id'], email)
+            if workflow_instance:
+                logger.info(f"   🔄 Workflow started: {workflow_instance['id']}")
+                logger.info(f"✅ Complete workflow initiated for candidate {candidate['email']} applying to {job['title']}")
+            else:
+                logger.warning(f"   ⚠️ Failed to start workflow")
             
         except Exception as e:
             logger.error(f"Error starting workflow: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+    
+    def _extract_job_title_from_subject(self, subject: str) -> str:
+        """Extract job title from email subject"""
+        import re
+        
+        # Common patterns for job application subjects
+        patterns = [
+            r"applying for (.+?) (?:role|position|job)",
+            r"application for (.+?) (?:role|position|job)",
+            r"(.+?) (?:role|position|job) application",
+            r"applying for (.+)",
+            r"application for (.+)"
+        ]
+        
+        subject_lower = subject.lower()
+        
+        for pattern in patterns:
+            match = re.search(pattern, subject_lower, re.IGNORECASE)
+            if match:
+                job_title = match.group(1).strip()
+                # Clean up the job title
+                job_title = re.sub(r'\s+', ' ', job_title)  # Remove extra spaces
+                job_title = job_title.title()  # Proper case
+                return job_title
+        
+        # Fallback: return the whole subject if no pattern matches
+        return subject
+    
+    def _parse_candidate_info_from_email(self, from_email: str, email: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse candidate information from email"""
+        import re
+        
+        # Extract email address
+        email_match = re.search(r'<(.+?)>', from_email)
+        candidate_email = email_match.group(1) if email_match else from_email
+        
+        # Extract name (everything before < or the whole string if no <)
+        name_part = from_email.split('<')[0].strip()
+        if not name_part:
+            name_part = candidate_email.split('@')[0]
+        
+        # Try to split name into first/last
+        name_parts = name_part.strip('"').split()
+        first_name = name_parts[0] if name_parts else "Unknown"
+        last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+        
+        return {
+            "email": candidate_email,
+            "first_name": first_name,
+            "last_name": last_name,
+            "source": "email",
+            "source_details": {
+                "original_from": from_email,
+                "email_id": email.get('id'),
+                "received_at": datetime.utcnow().isoformat()
+            }
+        }
+    
+    async def _find_existing_job(self, db: AsyncSession, job_title: str) -> Optional[Dict[str, Any]]:
+        """Find existing job by title (no job creation - jobs must exist first)"""
+        try:
+            from sqlalchemy import select
+            from models.job import Job
+            
+            # Find existing job by title (case-insensitive partial match)
+            # Try exact match first, then partial match
+            result = await db.execute(
+                select(Job).where(
+                    Job.title.ilike(f"%{job_title}%"),
+                    Job.status.in_(["active", "draft"])
+                ).limit(1)
+            )
+            existing_job = result.scalar_one_or_none()
+            
+            if existing_job:
+                logger.info(f"   ✅ Found existing job: {existing_job.title}")
+                return {
+                    "id": existing_job.id,
+                    "title": existing_job.title,
+                    "status": existing_job.status,
+                    "workflow_template_id": existing_job.workflow_template_id,
+                    "department": getattr(existing_job, 'department', None)
+                }
+            else:
+                # Log available jobs for debugging
+                all_jobs_result = await db.execute(
+                    select(Job.title).where(Job.status.in_(["active", "draft"]))
+                )
+                available_jobs = [row[0] for row in all_jobs_result.fetchall()]
+                logger.warning(f"   ❌ No job found for title: '{job_title}'")
+                logger.info(f"   📋 Available jobs: {available_jobs}")
+                return None
+            
+        except Exception as e:
+            logger.error(f"Error finding job: {e}")
+            return None
+    
+    async def _find_or_create_candidate(self, db: AsyncSession, candidate_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Find existing candidate or create a new one"""
+        try:
+            from sqlalchemy import select
+            from models.candidate import Candidate
+            
+            # Try to find existing candidate by email
+            result = await db.execute(
+                select(Candidate).where(
+                    Candidate.email == candidate_info["email"],
+                    Candidate.is_deleted == False
+                )
+            )
+            existing_candidate = result.scalar_one_or_none()
+            
+            if existing_candidate:
+                return {
+                    "id": existing_candidate.id,
+                    "email": existing_candidate.email,
+                    "first_name": existing_candidate.first_name,
+                    "last_name": existing_candidate.last_name
+                }
+            
+            # Create new candidate
+            new_candidate = Candidate(
+                first_name=candidate_info["first_name"],
+                last_name=candidate_info["last_name"],
+                email=candidate_info["email"],
+                source=candidate_info["source"],
+                source_details=candidate_info["source_details"],
+                status="new"
+            )
+            
+            db.add(new_candidate)
+            await db.flush()  # Get the ID without committing
+            
+            return {
+                "id": new_candidate.id,
+                "email": new_candidate.email,
+                "first_name": new_candidate.first_name,
+                "last_name": new_candidate.last_name
+            }
+            
+        except Exception as e:
+            logger.error(f"Error finding/creating candidate: {e}")
+            return None
+    
+    async def _create_application(self, db: AsyncSession, job_id: str, candidate_id: str, email: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Create an application record"""
+        try:
+            from models.candidate import Application
+            
+            new_application = Application(
+                job_id=job_id,
+                candidate_id=candidate_id,
+                status="applied",
+                application_data={
+                    "email_id": email.get('id'),
+                    "applied_via": "email",
+                    "application_source": "email_polling"
+                },
+                applied_at=datetime.utcnow(),
+                source="email"
+            )
+            
+            db.add(new_application)
+            await db.flush()
+            
+            return {
+                "id": new_application.id,
+                "status": new_application.status,
+                "applied_at": new_application.applied_at
+            }
+            
+        except Exception as e:
+            logger.error(f"Error creating application: {e}")
+            return None
+    
+    async def _start_candidate_workflow(self, db: AsyncSession, job_id: str, candidate_id: str, email: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Start a workflow instance for the candidate"""
+        try:
+            from sqlalchemy import select
+            from models.workflow import CandidateWorkflow, WorkflowTemplate, WorkflowStepDetail
+            from models.job import Job
+            
+            # Get the job and its workflow template
+            job_result = await db.execute(
+                select(Job).where(Job.id == job_id)
+            )
+            job = job_result.scalar_one_or_none()
+            
+            if not job or not job.workflow_template_id:
+                logger.warning(f"Job {job_id} has no workflow template")
+                return None
+            
+            # Get the first step of the workflow
+            first_step_result = await db.execute(
+                select(WorkflowStepDetail).where(
+                    WorkflowStepDetail.workflow_template_id == job.workflow_template_id,
+                    WorkflowStepDetail.order_number == 1,
+                    WorkflowStepDetail.is_deleted == False
+                ).limit(1)
+            )
+            first_step = first_step_result.scalar_one_or_none()
+            
+            # Create workflow instance
+            workflow_instance = CandidateWorkflow(
+                name=f"Hiring workflow for {job.title}",
+                description=f"Automated workflow started from email application",
+                category="hiring",
+                job_id=job_id,
+                workflow_template_id=job.workflow_template_id,
+                candidate_id=candidate_id,
+                current_step_detail_id=first_step.id if first_step else None,
+                execution_log=[{
+                    "event": "workflow_started",
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "trigger": "email_application",
+                    "email_id": email.get('id')
+                }]
+            )
+            
+            db.add(workflow_instance)
+            await db.flush()
+            
+            # Commit all changes
+            await db.commit()
+            
+            return {
+                "id": workflow_instance.id,
+                "name": workflow_instance.name,
+                "current_step": first_step.id if first_step else None,
+                "started_at": workflow_instance.started_at
+            }
+            
+        except Exception as e:
+            logger.error(f"Error starting candidate workflow: {e}")
+            await db.rollback()
+            return None
             
     async def _update_tokens_in_db(self, config_id: str, new_tokens: Dict[str, Any]):
         """Update tokens in the database after refresh"""
