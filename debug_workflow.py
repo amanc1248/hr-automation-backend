@@ -69,10 +69,8 @@ async def debug_workflow():
                     id, 
                     name, 
                     description,
-                    category,
-                    is_active
+                    category
                 FROM workflow_template 
-                WHERE is_active = true
                 ORDER BY created_at DESC
             """))
             

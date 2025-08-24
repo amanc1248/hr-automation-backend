@@ -385,13 +385,34 @@ class EmailPollingService:
             await db.commit()
             logger.info(f"   💾 Committed candidate and application to database")
             
-            # 9. Start workflow instance (this is optional - if it fails, candidate and application are still saved)
-            workflow_instance = await self._start_candidate_workflow(db, job['id'], candidate['id'], email)
-            if workflow_instance:
-                logger.info(f"   🔄 Workflow started: {workflow_instance['id']}")
-                logger.info(f"✅ Complete workflow initiated for candidate {candidate['email']} applying to {job['title']}")
+            # 9. Find workflow_template_id using job_id
+            workflow_template_id = await self._get_workflow_template_id_from_job(db, job['id'])
+            if not workflow_template_id:
+                logger.warning(f"   ⚠️ No workflow template found for job: {job['title']}")
+                logger.info(f"   💡 Workflow processing stopped - candidate and application were saved successfully")
+                return
+            
+            logger.info(f"   🔄 Found workflow template ID: {workflow_template_id}")
+            
+            # 10. Check if candidate_workflow exists
+            existing_workflow = await self._find_existing_candidate_workflow(db, job['id'], candidate['id'], workflow_template_id)
+            if existing_workflow:
+                logger.info(f"   ✅ Found existing candidate workflow: {existing_workflow['id']}")
+                logger.info(f"   📋 Current step: {existing_workflow.get('current_step', 'Not set')}")
+                # TODO: Proceed to next step (workflow step processing)
+                logger.info(f"   🔄 Proceeding to workflow step processing...")
             else:
-                logger.warning(f"   ⚠️ Failed to start workflow, but candidate and application were saved successfully")
+                logger.info(f"   🆕 Creating new candidate workflow...")
+                # 11. Create new candidate_workflow
+                new_workflow = await self._create_candidate_workflow(db, job['id'], candidate['id'], workflow_template_id, email)
+                if new_workflow:
+                    logger.info(f"   ✅ Created new candidate workflow: {new_workflow['id']}")
+                    logger.info(f"   📋 Starting with step: {new_workflow.get('current_step', 'Not set')}")
+                    # TODO: Proceed to next step (workflow step processing)
+                    logger.info(f"   🔄 Proceeding to workflow step processing...")
+                else:
+                    logger.warning(f"   ⚠️ Failed to create candidate workflow")
+                    logger.info(f"   💡 Workflow processing stopped - candidate and application were saved successfully")
             
         except Exception as e:
             logger.error(f"Error starting workflow: {e}")
@@ -510,6 +531,119 @@ class EmailPollingService:
             logger.error(f"Error getting company_id from job: {e}")
             return None
     
+    async def _get_workflow_template_id_from_job(self, db: AsyncSession, job_id: str) -> Optional[str]:
+        """Get workflow_template_id from job"""
+        try:
+            from sqlalchemy import select
+            from models.job import Job
+            
+            result = await db.execute(
+                select(Job.workflow_template_id).where(Job.id == job_id)
+            )
+            workflow_template_id = result.scalar_one_or_none()
+            return str(workflow_template_id) if workflow_template_id else None
+            
+        except Exception as e:
+            logger.error(f"Error getting workflow_template_id from job: {e}")
+            return None
+    
+    async def _find_existing_candidate_workflow(self, db: AsyncSession, job_id: str, candidate_id: str, workflow_template_id: str) -> Optional[Dict[str, Any]]:
+        """Find existing candidate workflow using job_id, candidate_id, and workflow_template_id"""
+        try:
+            from sqlalchemy import select
+            from models.workflow import CandidateWorkflow
+            
+            result = await db.execute(
+                select(CandidateWorkflow).where(
+                    CandidateWorkflow.job_id == job_id,
+                    CandidateWorkflow.candidate_id == candidate_id,
+                    CandidateWorkflow.workflow_template_id == workflow_template_id,
+                    CandidateWorkflow.is_deleted == False
+                )
+            )
+            existing_workflow = result.scalar_one_or_none()
+            
+            if existing_workflow:
+                return {
+                    "id": existing_workflow.id,
+                    "name": existing_workflow.name,
+                    "current_step_detail_id": existing_workflow.current_step_detail_id,
+                    "started_at": existing_workflow.started_at,
+                    "status": "existing"
+                }
+            else:
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error finding existing candidate workflow: {e}")
+            return None
+    
+    async def _create_candidate_workflow(self, db: AsyncSession, job_id: str, candidate_id: str, workflow_template_id: str, email: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Create new candidate workflow"""
+        try:
+            from sqlalchemy import select
+            from models.workflow import CandidateWorkflow, WorkflowStepDetail, WorkflowTemplate
+            from models.job import Job
+            
+            # Get job details for workflow name
+            job_result = await db.execute(
+                select(Job.title).where(Job.id == job_id)
+            )
+            job_title = job_result.scalar_one_or_none() or "Unknown Job"
+            
+            # Get the workflow template to access steps_execution_id
+            template_result = await db.execute(
+                select(WorkflowTemplate).where(WorkflowTemplate.id == workflow_template_id)
+            )
+            template = template_result.scalar_one_or_none()
+            
+            first_step = None
+            if template and template.steps_execution_id:
+                # Get the first step from the template's steps_execution_id array
+                # Find the step detail with order_number == 1 from the template's steps
+                first_step_result = await db.execute(
+                    select(WorkflowStepDetail).where(
+                        WorkflowStepDetail.id.in_(template.steps_execution_id),
+                        WorkflowStepDetail.order_number == 1,
+                        WorkflowStepDetail.is_deleted == False
+                    ).limit(1)
+                )
+                first_step = first_step_result.scalar_one_or_none()
+            
+            # Create workflow instance
+            workflow_instance = CandidateWorkflow(
+                name=f"Hiring workflow for {job_title}",
+                description=f"Automated workflow started from email application",
+                category="hiring",
+                job_id=job_id,
+                workflow_template_id=workflow_template_id,
+                candidate_id=candidate_id,
+                current_step_detail_id=first_step.id if first_step else None,
+                execution_log=[{
+                    "event": "workflow_started",
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "trigger": "email_application",
+                    "email_id": email.get('id')
+                }]
+            )
+            
+            db.add(workflow_instance)
+            await db.flush()
+            await db.commit()
+            
+            return {
+                "id": workflow_instance.id,
+                "name": workflow_instance.name,
+                "current_step_detail_id": first_step.id if first_step else None,
+                "started_at": workflow_instance.started_at,
+                "status": "new"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error creating candidate workflow: {e}")
+            await db.rollback()
+            return None
+    
     async def _find_or_create_candidate(self, db: AsyncSession, candidate_info: Dict[str, Any], company_id: str) -> Optional[Dict[str, Any]]:
         """Find existing candidate or create a new one"""
         try:
@@ -612,65 +746,7 @@ class EmailPollingService:
             logger.error(f"Error creating application: {e}")
             return None
     
-    async def _start_candidate_workflow(self, db: AsyncSession, job_id: str, candidate_id: str, email: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Start a workflow instance for the candidate"""
-        try:
-            from sqlalchemy import select
-            from models.workflow import CandidateWorkflow, WorkflowTemplate, WorkflowStepDetail
-            from models.job import Job
-            
-            # Get the job and its workflow template
-            job_result = await db.execute(
-                select(Job).where(Job.id == job_id)
-            )
-            job = job_result.scalar_one_or_none()
-            
-            if not job or not job.workflow_template_id:
-                logger.warning(f"Job {job_id} has no workflow template")
-                return None
-            
-            # Get the first step of the workflow
-            first_step_result = await db.execute(
-                select(WorkflowStepDetail).where(
-                    WorkflowStepDetail.workflow_template_id == job.workflow_template_id,
-                    WorkflowStepDetail.order_number == 1,
-                    WorkflowStepDetail.is_deleted == False
-                ).limit(1)
-            )
-            first_step = first_step_result.scalar_one_or_none()
-            
-            # Create workflow instance
-            workflow_instance = CandidateWorkflow(
-                name=f"Hiring workflow for {job.title}",
-                description=f"Automated workflow started from email application",
-                category="hiring",
-                job_id=job_id,
-                workflow_template_id=job.workflow_template_id,
-                candidate_id=candidate_id,
-                current_step_detail_id=first_step.id if first_step else None,
-                execution_log=[{
-                    "event": "workflow_started",
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "trigger": "email_application",
-                    "email_id": email.get('id')
-                }]
-            )
-            
-            db.add(workflow_instance)
-            await db.flush()
-            await db.commit()  # Commit the workflow instance
-            
-            return {
-                "id": workflow_instance.id,
-                "name": workflow_instance.name,
-                "current_step": first_step.id if first_step else None,
-                "started_at": workflow_instance.started_at
-            }
-            
-        except Exception as e:
-            logger.error(f"Error starting candidate workflow: {e}")
-            await db.rollback()
-            return None
+
             
     async def _update_tokens_in_db(self, config_id: str, new_tokens: Dict[str, Any]):
         """Update tokens in the database after refresh"""
