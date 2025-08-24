@@ -99,6 +99,7 @@ async def get_workflow_templates(
                             auto_start=step_detail.auto_start,
                             required_human_approval=step_detail.required_human_approval,
                             number_of_approvals_needed=step_detail.number_of_approvals_needed,
+                            approvers=step_detail.approvers or [],  # Include approvers list
                             status=step_detail.status,
                             order_number=step_detail.order_number,
                             created_at=step_detail.created_at,
@@ -193,7 +194,7 @@ async def create_workflow_template_with_steps(
                 auto_start=step.auto_start,
                 required_human_approval=step.required_human_approval,
                 number_of_approvals_needed=step.number_of_approvals_needed,
-                approvers=step.approvers,
+                approvers=[str(approver) for approver in step.approvers],  # Convert UUIDs to strings for JSON storage
                 order_number=step.order_number,
                 status="awaiting"
             )
@@ -275,7 +276,7 @@ async def update_workflow_template(
                 auto_start=step.auto_start,
                 required_human_approval=step.required_human_approval,
                 number_of_approvals_needed=step.number_of_approvals_needed,
-                approvers=step.approvers,
+                approvers=[str(approver) for approver in step.approvers],  # Convert UUIDs to strings for JSON storage
                 order_number=step.order_number,
                 status="awaiting"
             )

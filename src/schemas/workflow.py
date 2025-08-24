@@ -47,6 +47,7 @@ class WorkflowStepDetailPopulated(BaseModel):
     auto_start: bool = False
     required_human_approval: bool = False
     number_of_approvals_needed: Optional[int] = None
+    approvers: List[str] = Field(default_factory=list)  # List of approver user IDs (as strings)
     status: str = "awaiting"
     order_number: int
     created_at: datetime
