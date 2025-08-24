@@ -772,8 +772,21 @@ class EmailPollingService:
                 
                 logger.info(f"   📋 Executing step {steps_executed}: {current_step_detail_id}")
                 
-                # Execute current workflow step
-                step_result = await self._execute_workflow_step(db, current_workflow, candidate, job, email)
+                # Only use AI verification for the first step (steps_executed == 0)
+                if steps_executed == 0:
+                    # Use AI to verify if this step should execute based on email content
+                    should_execute_step = await self._ai_verify_step_execution(db, current_step_detail_id, email, candidate, job)
+                    
+                    if not should_execute_step:
+                        logger.info(f"   🤖 AI determined this step should not execute based on email content")
+                        logger.info(f"   ⏭️ Skipping step execution and finding appropriate step")
+                        break
+                    else:
+                        # AI approved current step execution
+                        step_result = await self._execute_workflow_step(db, current_workflow, candidate, job, email)
+                else:
+                    # For subsequent steps, execute normally without AI verification
+                    step_result = await self._execute_workflow_step(db, current_workflow, candidate, job, email)
                 
                 if not step_result:
                     logger.warning(f"   ⚠️ Step execution failed - stopping workflow progression")
@@ -1040,6 +1053,231 @@ class EmailPollingService:
             logger.error(f"Error checking auto_start for step {step_detail_id}: {e}")
             # Default to False (manual trigger) if there's an error
             return False
+    
+    async def _ai_verify_step_execution(self, db: AsyncSession, step_detail_id: str, email: Dict[str, Any], candidate: Dict[str, Any], job: Dict[str, Any]) -> bool:
+        """Use AI to verify if the current step should execute based on email content"""
+        try:
+            from sqlalchemy import select
+            from models.workflow import WorkflowStepDetail, WorkflowStep
+            
+            # Get current step details
+            step_result = await db.execute(
+                select(WorkflowStepDetail, WorkflowStep)
+                .join(WorkflowStep, WorkflowStepDetail.workflow_step_id == WorkflowStep.id)
+                .where(
+                    WorkflowStepDetail.id == step_detail_id,
+                    WorkflowStepDetail.is_deleted == False
+                )
+            )
+            step_info = step_result.fetchone()
+            
+            if not step_info:
+                logger.warning(f"   ⚠️ Step not found: {step_detail_id}")
+                return False
+            
+            step_detail = step_info.WorkflowStepDetail
+            workflow_step = step_info.WorkflowStep
+            
+            # Extract email content
+            email_content = self._extract_email_content(email)
+            
+            # Use Portia's AI to analyze if this step should execute
+            from services.portia_service import portia_service
+            
+            ai_prompt = f"""
+            Analyze the following email content and determine if it should trigger the workflow step "{workflow_step.name}".
+            
+            Email Content:
+            {email_content}
+            
+            Current Workflow Step: {workflow_step.name}
+            Step Type: {workflow_step.step_type}
+            Step Description: {workflow_step.description}
+            
+            Candidate: {candidate.get('first_name', '')} {candidate.get('last_name', '')}
+            Job: {job.get('title', '')}
+            
+            Email Analysis Guidelines:
+            - If email is about "submitting assignment" or "completed technical test" → Should trigger "Review Technical Assignment"
+            - If email is about "interview availability" or "scheduling" → Should trigger "Schedule Interview"  
+            - If email is about "accepting offer" or "start date" → Should trigger offer-related steps
+            - If email is general inquiry or unrelated → Should NOT trigger current step
+            - If email is initial application → Should trigger "Resume Analysis"
+            
+            Respond with only: "YES" if this email should trigger the current step, "NO" if it should not.
+            """
+            
+            # Get AI response using Portia
+            try:
+                import json
+                from portia import Message
+                
+                config = portia_service.portia.config
+                llm = config.get_default_model()
+                
+                messages = [
+                    Message(role="system", content="You are an expert HR workflow analyst. Analyze emails to determine correct workflow step execution."),
+                    Message(role="user", content=ai_prompt)
+                ]
+                
+                response = llm.get_response(messages)
+                ai_decision = response.value.strip().upper() if hasattr(response, 'value') else str(response).strip().upper()
+                
+                should_execute = "YES" in ai_decision
+                
+                logger.info(f"   🤖 AI Step Verification:")
+                logger.info(f"      📧 Email content: {email_content[:100]}...")
+                logger.info(f"      📋 Current step: {workflow_step.name}")
+                logger.info(f"      🎯 AI decision: {ai_decision}")
+                logger.info(f"      ✅ Should execute: {should_execute}")
+                
+                return should_execute
+                
+            except Exception as ai_error:
+                logger.warning(f"   ⚠️ AI verification failed: {ai_error}, defaulting to execute")
+                return True  # Default to executing if AI fails
+                
+        except Exception as e:
+            logger.error(f"Error in AI step verification: {e}")
+            return True  # Default to executing if there's an error
+    
+    async def _ai_suggest_workflow_step(self, db: AsyncSession, workflow_template_id: str, email: Dict[str, Any], candidate: Dict[str, Any], job: Dict[str, Any]) -> str:
+        """Use AI to suggest which workflow step should execute for this email"""
+        try:
+            from sqlalchemy import select
+            from models.workflow import WorkflowTemplate, WorkflowStepDetail, WorkflowStep
+            
+            # Get all available steps in this workflow template
+            template_result = await db.execute(
+                select(WorkflowTemplate).where(WorkflowTemplate.id == workflow_template_id)
+            )
+            template = template_result.scalar_one_or_none()
+            
+            if not template or not template.steps_execution_id:
+                return None
+            
+            # Get all step details for this template
+            steps_result = await db.execute(
+                select(WorkflowStepDetail, WorkflowStep)
+                .join(WorkflowStep, WorkflowStepDetail.workflow_step_id == WorkflowStep.id)
+                .where(
+                    WorkflowStepDetail.id.in_(template.steps_execution_id),
+                    WorkflowStepDetail.is_deleted == False
+                )
+                .order_by(WorkflowStepDetail.order_number)
+            )
+            available_steps = steps_result.fetchall()
+            
+            if not available_steps:
+                return None
+            
+            # Extract email content
+            email_content = self._extract_email_content(email)
+            
+            # Create step options for AI
+            step_options = []
+            for step_detail, workflow_step in available_steps:
+                step_options.append(f"- {workflow_step.name} (ID: {step_detail.id}) - {workflow_step.step_type}: {workflow_step.description[:100]}...")
+            
+            # Use AI to suggest the best step
+            from services.portia_service import portia_service
+            
+            ai_prompt = f"""
+            Analyze this email content and suggest which workflow step should execute:
+            
+            Email Content:
+            {email_content}
+            
+            Available Workflow Steps:
+            {chr(10).join(step_options)}
+            
+            Candidate: {candidate.get('first_name', '')} {candidate.get('last_name', '')}
+            Job: {job.get('title', '')}
+            
+            Email Analysis Rules:
+            - "submitted assignment" / "completed test" → Review Technical Assignment
+            - "interview availability" / "scheduling" → Schedule Interview
+            - "accepting offer" / "start date" → Send Offer Letter
+            - Initial application → Resume Analysis
+            - General inquiry → None (respond with "NONE")
+            
+            Respond with only the step ID (e.g., "abc123-def-456") or "NONE" if no step is appropriate.
+            """
+            
+            try:
+                import json
+                from portia import Message
+                
+                config = portia_service.portia.config
+                llm = config.get_default_model()
+                
+                messages = [
+                    Message(role="system", content="You are an expert HR workflow analyst. Suggest the most appropriate workflow step based on email content."),
+                    Message(role="user", content=ai_prompt)
+                ]
+                
+                response = llm.get_response(messages)
+                suggested_step_id = response.value.strip() if hasattr(response, 'value') else str(response).strip()
+                
+                if suggested_step_id.upper() == "NONE":
+                    logger.info(f"   🤖 AI suggests no workflow step for this email")
+                    return None
+                
+                # Verify the suggested step ID exists in our available steps
+                valid_step_ids = [step_detail.id for step_detail, _ in available_steps]
+                if suggested_step_id in [str(sid) for sid in valid_step_ids]:
+                    # Find the step name for logging
+                    step_name = next((ws.name for sd, ws in available_steps if str(sd.id) == suggested_step_id), "Unknown")
+                    logger.info(f"   🤖 AI suggests step: {step_name} (ID: {suggested_step_id})")
+                    return suggested_step_id
+                else:
+                    logger.warning(f"   ⚠️ AI suggested invalid step ID: {suggested_step_id}")
+                    return None
+                    
+            except Exception as ai_error:
+                logger.warning(f"   ⚠️ AI step suggestion failed: {ai_error}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error in AI step suggestion: {e}")
+            return None
+    
+    def _extract_email_content(self, email: Dict[str, Any]) -> str:
+        """Extract readable content from email for AI analysis"""
+        try:
+            # Start with snippet
+            email_content = email.get('snippet', '')
+            
+            # Try to get more detailed content from payload
+            if 'payload' in email and 'headers' in email['payload']:
+                headers = email['payload']['headers']
+                subject = next((h['value'] for h in headers if h['name'] == 'Subject'), '')
+                sender = next((h['value'] for h in headers if h['name'] == 'From'), '')
+                
+                # Try to get email body
+                body_content = ""
+                if 'parts' in email['payload']:
+                    for part in email['payload']['parts']:
+                        if part.get('mimeType') == 'text/plain' and 'data' in part.get('body', {}):
+                            try:
+                                import base64
+                                body_data = base64.urlsafe_b64decode(part['body']['data']).decode('utf-8')
+                                body_content = body_data
+                                break
+                            except:
+                                continue
+                
+                # Combine all available content
+                if body_content:
+                    email_content = f"Subject: {subject}\nFrom: {sender}\n\nContent:\n{body_content}"
+                else:
+                    email_content = f"Subject: {subject}\nFrom: {sender}\n\nSnippet: {email.get('snippet', '')}"
+            
+            return email_content
+            
+        except Exception as e:
+            logger.warning(f"Error extracting email content: {e}")
+            return email.get('snippet', 'Email content not available')
     
     async def _update_candidate_workflow_current_step(self, db: AsyncSession, workflow_id: str, next_step_detail_id: str):
         """Update the current_step_detail_id in candidate_workflow"""
