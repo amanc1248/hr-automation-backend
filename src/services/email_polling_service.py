@@ -794,7 +794,7 @@ class EmailPollingService:
                     
                     if next_step_detail_id:
                         # Check if next step should auto-start (only for steps after the first one)
-                        if steps_executed > 1:  # For 2nd step onwards, check auto_start
+                        if steps_executed > 0:  # For 2nd step onwards, check auto_start
                             should_auto_start = await self._should_step_auto_start(db, next_step_detail_id)
                             if not should_auto_start:
                                 logger.info(f"   ⏸️ Next step requires manual trigger (auto_start=false): {next_step_detail_id}")
