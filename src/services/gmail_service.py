@@ -144,37 +144,6 @@ class GmailService:
         except Exception:
             return False
     
-    async def refresh_access_token(self, refresh_token: str) -> Dict[str, Any]:
-        """Refresh expired access token"""
-        
-        token_data = {
-            'client_id': self.client_id,
-            'client_secret': self.client_secret,
-            'refresh_token': refresh_token,
-            'grant_type': 'refresh_token'
-        }
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                'https://oauth2.googleapis.com/token',
-                data=token_data,
-                headers={'Content-Type': 'application/x-www-form-urlencoded'}
-            )
-            
-            if response.status_code != 200:
-                raise Exception(f"Token refresh failed: {response.text}")
-            
-            tokens = response.json()
-            
-            # Calculate new expiration time
-            expires_in = tokens.get('expires_in', 3600)
-            expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
-            
-            return {
-                'access_token': tokens['access_token'],
-                'expires_at': expires_at
-            }
-    
     async def save_gmail_config(
         self, 
         db: AsyncSession,
@@ -275,6 +244,84 @@ class GmailService:
             config_dict['refresh_token'] = self._decrypt_token(config_dict['refresh_token'])
         
         return GmailConfig(**config_dict)
+    
+    async def get_valid_access_token(self, gmail_config: GmailConfig) -> Optional[str]:
+        """Get a valid access token, refreshing if necessary"""
+        
+        # Check if current token is still valid
+        if hasattr(gmail_config, 'token_expires_at') and gmail_config.token_expires_at:
+            if datetime.utcnow() < gmail_config.token_expires_at:
+                return gmail_config.access_token
+        
+        # Token is expired or about to expire, refresh it
+        if not hasattr(gmail_config, 'refresh_token') or not gmail_config.refresh_token:
+            print(f"   ⚠️  No refresh token available for {gmail_config.gmail_address}")
+            return None
+        
+        try:
+            print(f"   🔄 Refreshing access token for {gmail_config.gmail_address}")
+            new_tokens = await self.refresh_access_token(gmail_config.refresh_token)
+            return new_tokens['access_token']
+        except Exception as e:
+            print(f"   ❌ Failed to refresh token: {e}")
+            return None
+    
+    async def get_gmail_config_by_email(self, db: AsyncSession, email_address: str) -> Optional[GmailConfig]:
+        """Get Gmail configuration by email address with decrypted tokens"""
+        
+        from sqlalchemy import text
+        
+        result = await db.execute(
+            text("SELECT * FROM gmail_configs WHERE gmail_address = :email AND is_active = true"),
+            {'email': email_address}
+        )
+        
+        row = result.fetchone()
+        if not row:
+            return None
+        
+        config_dict = dict(row._mapping)
+        
+        # Decrypt tokens for use
+        if config_dict['access_token']:
+            config_dict['access_token'] = self._decrypt_token(config_dict['access_token'])
+        if config_dict['refresh_token']:
+            config_dict['refresh_token'] = self._decrypt_token(config_dict['refresh_token'])
+        
+        return GmailConfig(**config_dict)
+    
+    async def refresh_access_token(self, refresh_token: str) -> Dict[str, Any]:
+        """Refresh an expired access token using refresh token"""
+        
+        token_data = {
+            'client_id': self.client_id,
+            'client_secret': self.client_secret,
+            'refresh_token': refresh_token,
+            'grant_type': 'refresh_token'
+        }
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                'https://oauth2.googleapis.com/token',
+                data=token_data,
+                headers={'Content-Type': 'application/x-www-form-urlencoded'}
+            )
+            
+            if response.status_code != 200:
+                raise Exception(f"Token refresh failed: {response.text}")
+            
+            tokens = response.json()
+            
+            # Calculate expiration time
+            expires_in = tokens.get('expires_in', 3600)
+            expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+            
+            return {
+                'access_token': tokens['access_token'],
+                'refresh_token': refresh_token,  # Keep the same refresh token
+                'expires_at': expires_at,
+                'scope': tokens.get('scope', '').split()
+            }
 
 # Global instance
 gmail_service = GmailService()

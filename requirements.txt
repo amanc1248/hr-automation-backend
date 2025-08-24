@@ -21,6 +21,10 @@ passlib[bcrypt]>=1.7.4
 PyJWT>=2.8.0
 sqlalchemy>=2.0.23
 
+# Google Cloud services
+google-cloud-pubsub>=2.18.0
+google-auth>=2.17.0
+
 # HTTP client for external APIs
 httpx>=0.25.2
 aiohttp>=3.9.1
