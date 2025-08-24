@@ -398,18 +398,29 @@ class EmailPollingService:
             existing_workflow = await self._find_existing_candidate_workflow(db, job['id'], candidate['id'], workflow_template_id)
             if existing_workflow:
                 logger.info(f"   ✅ Found existing candidate workflow: {existing_workflow['id']}")
-                logger.info(f"   📋 Current step: {existing_workflow.get('current_step', 'Not set')}")
-                # TODO: Proceed to next step (workflow step processing)
-                logger.info(f"   🔄 Proceeding to workflow step processing...")
+                logger.info(f"   📋 Current step ID: {existing_workflow.get('current_step_detail_id', 'Not set')}")
+                
+                # Execute current workflow step
+                step_result = await self._execute_workflow_step(db, existing_workflow, candidate, job, email)
+                if step_result:
+                    logger.info(f"   🎯 Workflow step executed: {step_result.get('status', 'unknown')}")
+                else:
+                    logger.warning(f"   ⚠️ Failed to execute workflow step")
+                    
             else:
                 logger.info(f"   🆕 Creating new candidate workflow...")
                 # 11. Create new candidate_workflow
                 new_workflow = await self._create_candidate_workflow(db, job['id'], candidate['id'], workflow_template_id, email)
                 if new_workflow:
                     logger.info(f"   ✅ Created new candidate workflow: {new_workflow['id']}")
-                    logger.info(f"   📋 Starting with step: {new_workflow.get('current_step', 'Not set')}")
-                    # TODO: Proceed to next step (workflow step processing)
-                    logger.info(f"   🔄 Proceeding to workflow step processing...")
+                    logger.info(f"   📋 Starting with step ID: {new_workflow.get('current_step_detail_id', 'Not set')}")
+                    
+                    # Execute first workflow step
+                    step_result = await self._execute_workflow_step(db, new_workflow, candidate, job, email)
+                    if step_result:
+                        logger.info(f"   🎯 Workflow step executed: {step_result.get('status', 'unknown')}")
+                    else:
+                        logger.warning(f"   ⚠️ Failed to execute workflow step")
                 else:
                     logger.warning(f"   ⚠️ Failed to create candidate workflow")
                     logger.info(f"   💡 Workflow processing stopped - candidate and application were saved successfully")
@@ -745,8 +756,140 @@ class EmailPollingService:
         except Exception as e:
             logger.error(f"Error creating application: {e}")
             return None
-    
 
+    async def _execute_workflow_step(self, db: AsyncSession, workflow: Dict[str, Any], candidate: Dict[str, Any], job: Dict[str, Any], email: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Execute the current workflow step using Portia"""
+        try:
+            from sqlalchemy import select
+            from models.workflow import WorkflowStepDetail, WorkflowStep
+            
+            current_step_detail_id = workflow.get('current_step_detail_id')
+            if not current_step_detail_id:
+                logger.warning("   ⚠️ No current step detail ID found in workflow")
+                return None
+            
+            logger.info(f"   🔍 Executing workflow step detail: {current_step_detail_id}")
+            
+            # Get the WorkflowStepDetail and related WorkflowStep
+            step_detail_result = await db.execute(
+                select(WorkflowStepDetail).where(
+                    WorkflowStepDetail.id == current_step_detail_id,
+                    WorkflowStepDetail.is_deleted == False
+                )
+            )
+            step_detail = step_detail_result.scalar_one_or_none()
+            
+            if not step_detail:
+                logger.error(f"   ❌ WorkflowStepDetail not found: {current_step_detail_id}")
+                return None
+            
+            # Get the WorkflowStep to access the description
+            step_result = await db.execute(
+                select(WorkflowStep).where(
+                    WorkflowStep.id == step_detail.workflow_step_id,
+                    WorkflowStep.is_deleted == False
+                )
+            )
+            step = step_result.scalar_one_or_none()
+            
+            if not step:
+                logger.error(f"   ❌ WorkflowStep not found: {step_detail.workflow_step_id}")
+                return None
+            
+            logger.info(f"   📋 Step: {step.name}")
+            logger.info(f"   📝 Description: {step.description[:100]}...")
+            logger.info(f"   ⚙️ Step Type: {step.step_type}")
+            logger.info(f"   🎯 Actions: {step.actions}")
+            
+            # Prepare data for Portia
+            context_data = {
+                "candidate": candidate,
+                "job": job,
+                "email": email,
+                "step_detail": {
+                    "id": str(step_detail.id),
+                    "order_number": step_detail.order_number,
+                    "auto_start": step_detail.auto_start,
+                    "required_human_approval": step_detail.required_human_approval,
+                    "delay_in_seconds": step_detail.delay_in_seconds
+                },
+                "step": {
+                    "id": str(step.id),
+                    "name": step.name,
+                    "description": step.description,
+                    "step_type": step.step_type,
+                    "actions": step.actions
+                }
+            }
+            
+            # Execute step using Portia
+            portia_result = await self._execute_step_with_portia(step.description, context_data)
+            
+            if portia_result:
+                logger.info(f"   ✅ Portia execution completed")
+                logger.info(f"   📊 Result: {portia_result}")
+                
+                # TODO: Update workflow instance with result and move to next step if approved
+                # For now, just return the result
+                return portia_result
+            else:
+                logger.error(f"   ❌ Portia execution failed")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error executing workflow step: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            return None
+
+    async def _execute_step_with_portia(self, step_description: str, context_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Execute workflow step using Portia AI"""
+        try:
+            logger.info(f"   🤖 Executing with Portia...")
+            logger.info(f"   📋 Step Description: {step_description}")
+            
+            # For now, let's create a simple mock response until we implement the actual Portia tools
+            # This will help us test the workflow execution flow
+            
+            step_name = context_data["step"]["name"].lower()
+            
+            # Mock different responses based on step type
+            if "resume" in step_name or "analysis" in step_name:
+                mock_result = {
+                    "success": True,
+                    "data": "Resume analyzed successfully. Candidate has relevant experience in full-stack development.",
+                    "status": "approved"
+                }
+            elif "technical" in step_name or "assignment" in step_name:
+                mock_result = {
+                    "success": True,
+                    "data": "Technical assignment sent to candidate via email.",
+                    "status": "approved"
+                }
+            elif "interview" in step_name:
+                mock_result = {
+                    "success": True,
+                    "data": "Interview scheduled for next week.",
+                    "status": "approved"
+                }
+            else:
+                mock_result = {
+                    "success": True,
+                    "data": f"Step '{context_data['step']['name']}' executed successfully.",
+                    "status": "approved"
+                }
+            
+            logger.info(f"   🎯 Mock Portia Result: {mock_result}")
+            
+            # TODO: Replace this with actual Portia integration
+            # portia_client = PortiaClient()
+            # result = await portia_client.execute_step(step_description, context_data)
+            
+            return mock_result
+            
+        except Exception as e:
+            logger.error(f"Error executing step with Portia: {e}")
+            return None
             
     async def _update_tokens_in_db(self, config_id: str, new_tokens: Dict[str, Any]):
         """Update tokens in the database after refresh"""
