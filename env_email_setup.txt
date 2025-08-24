@@ -1,0 +1,40 @@
+# Email Monitoring Setup - Add these to your .env file
+
+# ============================================================================
+# GOOGLE CLOUD PUB/SUB CONFIGURATION
+# ============================================================================
+# Your Google Cloud Project ID (required)
+GOOGLE_CLOUD_PROJECT_ID=your-google-cloud-project-id
+
+# Pub/Sub Topic and Subscription names (optional - will use defaults if not set)
+GOOGLE_CLOUD_TOPIC_NAME=gmail-notifications
+GOOGLE_CLOUD_SUBSCRIPTION_NAME=gmail-notifications-sub
+
+# ============================================================================
+# GOOGLE CLOUD AUTHENTICATION
+# ============================================================================
+# Option 1: Service Account (recommended for production)
+# Download service account key from Google Cloud Console and set path:
+# GOOGLE_APPLICATION_CREDENTIALS=path/to/your/service-account-key.json
+
+# Option 2: Application Default Credentials (for development)
+# Run: gcloud auth application-default login
+# This will use your local Google Cloud credentials
+
+# ============================================================================
+# HOW TO GET GOOGLE_CLOUD_PROJECT_ID
+# ============================================================================
+# 1. Go to https://console.cloud.google.com/
+# 2. Select your project (or create one)
+# 3. Copy the Project ID from the top navigation bar
+# 4. Enable these APIs in your project:
+#    - Gmail API
+#    - Cloud Pub/Sub API
+#    - Cloud Build API (if using service accounts)
+
+# ============================================================================
+# EXAMPLE .env ENTRY
+# ============================================================================
+# GOOGLE_CLOUD_PROJECT_ID=hr-automation-123456
+# GOOGLE_CLOUD_TOPIC_NAME=gmail-notifications
+# GOOGLE_CLOUD_SUBSCRIPTION_NAME=gmail-notifications-sub

@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_SECRET: Optional[str] = Field(default=None, description="Google OAuth client secret")
     GOOGLE_REDIRECT_URI: Optional[str] = Field(default=None, description="Google OAuth redirect URI")
     
+    # Google Cloud Pub/Sub Configuration (for Gmail push notifications)
+    GOOGLE_CLOUD_PROJECT_ID: Optional[str] = Field(default=None, description="Google Cloud Project ID")
+    GOOGLE_CLOUD_TOPIC_NAME: Optional[str] = Field(default="gmail-notifications", description="Pub/Sub topic name for Gmail notifications")
+    GOOGLE_CLOUD_SUBSCRIPTION_NAME: Optional[str] = Field(default="gmail-notifications-sub", description="Pub/Sub subscription name")
+    
     # Encryption
     ENCRYPTION_KEY: Optional[str] = Field(default=None, description="Encryption key for sensitive data")
     

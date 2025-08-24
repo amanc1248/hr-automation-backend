@@ -1,4 +1,4 @@
 # Services package
-from .auth_service import AuthService
+# Import services as needed to avoid circular import issues
 
-__all__ = ["AuthService"]
+__all__ = []

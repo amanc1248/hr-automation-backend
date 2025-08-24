@@ -19,7 +19,8 @@ GMAIL_SCOPES = [
     'https://www.googleapis.com/auth/gmail.readonly',
     'https://www.googleapis.com/auth/gmail.send', 
     'https://www.googleapis.com/auth/calendar',
-    'https://www.googleapis.com/auth/userinfo.email'
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/cloud-platform'  # Required for Pub/Sub notifications
 ]
 
 class GmailConfig:
@@ -260,6 +261,52 @@ class GmailService:
         result = await db.execute(
             text("SELECT * FROM gmail_configs WHERE id = :config_id AND is_active = true"),
             {'config_id': config_id}
+        )
+        
+        row = result.fetchone()
+        if not row:
+            return None
+        
+        config_dict = dict(row._mapping)
+        
+        # Decrypt tokens for use
+        if config_dict['access_token']:
+            config_dict['access_token'] = self._decrypt_token(config_dict['access_token'])
+        if config_dict['refresh_token']:
+            config_dict['refresh_token'] = self._decrypt_token(config_dict['refresh_token'])
+        
+        return GmailConfig(**config_dict)
+    
+    async def get_valid_access_token(self, gmail_config: GmailConfig) -> Optional[str]:
+        """Get a valid access token, refreshing if necessary"""
+        
+        # Check if current token is still valid
+        if hasattr(gmail_config, 'token_expires_at') and gmail_config.token_expires_at:
+            from datetime import datetime
+            if datetime.utcnow() < gmail_config.token_expires_at:
+                return gmail_config.access_token
+        
+        # Token is expired or about to expire, refresh it
+        if not hasattr(gmail_config, 'refresh_token') or not gmail_config.refresh_token:
+            print(f"   ⚠️  No refresh token available for {gmail_config.gmail_address}")
+            return None
+        
+        try:
+            print(f"   🔄 Refreshing access token for {gmail_config.gmail_address}")
+            new_tokens = await self.refresh_access_token(gmail_config.refresh_token)
+            return new_tokens['access_token']
+        except Exception as e:
+            print(f"   ❌ Failed to refresh token: {e}")
+            return None
+    
+    async def get_gmail_config_by_email(self, db: AsyncSession, email_address: str) -> Optional[GmailConfig]:
+        """Get Gmail configuration by email address with decrypted tokens"""
+        
+        from sqlalchemy import text
+        
+        result = await db.execute(
+            text("SELECT * FROM gmail_configs WHERE gmail_address = :email AND is_active = true"),
+            {'email': email_address}
         )
         
         row = result.fetchone()
