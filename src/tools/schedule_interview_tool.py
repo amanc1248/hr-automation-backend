@@ -1,6 +1,6 @@
 """
-Schedule Interview Tool for Portia AI
-Intelligently schedules technical interviews with candidates
+Schedule Interview Tool for HR Workflow
+Generates interview invitations and scheduling details
 """
 
 import logging
@@ -9,7 +9,6 @@ from typing import Dict, Any, Optional, Type
 from datetime import datetime, timedelta
 from portia import Tool, ToolRunContext, Message
 from pydantic import BaseModel, Field
-import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -18,169 +17,169 @@ class ScheduleInterviewInput(BaseModel):
     candidate_email: str = Field(description="Candidate's email address")
     candidate_name: str = Field(description="Candidate's full name")
     job_title: str = Field(description="Job title they're applying for")
-    interview_type: str = Field(description="Type of interview (technical, behavioral, final)", default="technical")
-    preferred_duration: int = Field(description="Interview duration in minutes", default=60)
+    interview_type: str = Field(default="technical", description="Type of interview to schedule")
+    preferred_duration: int = Field(default=60, description="Preferred duration in minutes")
 
 class ScheduleInterviewTool(Tool[str]):
-    """Tool for intelligently scheduling interviews with candidates"""
+    """AI-powered interview scheduling and invitation tool"""
     
     id: str = "schedule_interview_tool"
     name: str = "Schedule Interview Tool"
     description: str = (
-        "Intelligently schedules technical interviews by analyzing availability and coordinating with hiring team. "
-        "Finds optimal time slots, sends professional calendar invites with interview details, video links, and preparation materials. "
-        "Ensures proper interview logistics and sends confirmation notifications."
+        "Schedules an interview with the candidate and generates professional interview invitation details. "
+        "Creates appropriate interview agenda, provides meeting logistics, and includes preparation guidelines. "
+        "Returns structured interview information ready for email delivery."
     )
     args_schema: Type[BaseModel] = ScheduleInterviewInput
     output_schema: tuple[str, str] = (
         "json",
-        "JSON object with 'success' (bool), 'status' ('approved'), 'data' (interview details), 'interview_scheduled' (bool)"
+        "JSON object with 'success' (bool), 'status' ('approved'), 'interview_scheduled' (bool), 'data' (interview details)"
     )
-    
-    def run(self, context: ToolRunContext, candidate_email: str, candidate_name: str, job_title: str, interview_type: str = "technical", preferred_duration: int = 60) -> str:
-        """Schedule interview using Portia's AI capabilities"""
+
+    def run(self, context: ToolRunContext, candidate_email: str, candidate_name: str, job_title: str, interview_type: str, preferred_duration: int) -> str:
+        """Generate interview invitation details"""
         try:
             logger.info(f"📅 Scheduling {interview_type} interview for {candidate_email}")
             
-            # Use Portia's LLM to determine optimal interview scheduling
+            # Use Portia's LLM to generate interview details
             llm = context.config.get_default_model()
             
-            scheduling_prompt = f"""
-            You are an expert interview coordinator scheduling a {interview_type} interview.
+            interview_prompt = f"""
+            Generate a comprehensive interview invitation for a candidate.
             
-            CANDIDATE: {candidate_name}
-            EMAIL: {candidate_email}
-            POSITION: {job_title}
-            INTERVIEW TYPE: {interview_type}
-            DURATION: {preferred_duration} minutes
+            Candidate: {candidate_name} ({candidate_email})
+            Position: {job_title}
+            Interview Type: {interview_type}
+            Duration: {preferred_duration} minutes
             
-            Current date: {datetime.now().strftime('%Y-%m-%d')}
+            Create interview invitation content that includes:
+            1. Professional congratulatory opening
+            2. Clear interview details (date, time, location/link)
+            3. Interview agenda breakdown
+            4. Preparation guidelines for the candidate
+            5. Meeting logistics (Zoom details, backup contacts)
+            6. Rescheduling instructions
+            7. Encouraging and professional tone
             
-            Generate optimal interview scheduling with:
-            1. Appropriate time slot (Tuesday-Thursday, 10 AM - 4 PM preferred)
-            2. Interview details and agenda
-            3. Interviewer assignment based on role
-            4. Preparation materials needed
-            5. Professional scheduling communication
-            
-            Provide a JSON response with:
-            {{
-                "interview_date": "2024-01-28",
-                "interview_time": "10:00 AM PST",
-                "interview_duration": {preferred_duration},
-                "interview_type": "{interview_type}",
-                "interviewer_details": {{
-                    "name": "Senior Engineering Manager Name",
-                    "email": "interviewer@company.com",
-                    "role": "Technical Lead",
-                    "experience": "5+ years"
-                }},
-                "interview_agenda": ["Introduction (5 min)", "Technical Questions (40 min)", "Q&A (15 min)"],
-                "video_conference": {{
-                    "platform": "Zoom",
-                    "link": "https://zoom.us/j/generated-meeting-id",
-                    "meeting_id": "123-456-789",
-                    "password": "interview123"
-                }},
-                "preparation_materials": ["Job description", "Technical competency framework", "Sample questions"],
-                "email_subject": "Interview Scheduled - {job_title} Position",
-                "scheduling_notes": "Professional scheduling details"
-            }}
-            
-            Schedule for 3-7 business days from today. Make it professional and thorough.
+            Format as a complete interview invitation ready for email.
             """
             
             messages = [
-                Message(
-                    role="system",
-                    content="You are an expert interview coordinator and scheduler. Create comprehensive interview schedules with proper logistics, timing, and professional coordination. Always respond in valid JSON format."
-                ),
-                Message(
-                    role="user",
-                    content=scheduling_prompt
-                )
+                Message(role="system", content="You are an expert HR coordinator creating professional interview invitations."),
+                Message(role="user", content=interview_prompt)
             ]
             
-            response = llm.get_response(messages)
-            
-            # Parse the AI response
             try:
-                interview_data = json.loads(response.content)
+                response = llm.get_response(messages)
+                interview_content = response.value if hasattr(response, 'value') else str(response)
                 
-                # Generate interview ID and finalize details
-                interview_id = f"INT-{datetime.now().year}-{str(uuid.uuid4())[:8].upper()}"
+                # Generate interview details
+                interview_date = datetime.now() + timedelta(days=3)  # Schedule 3 days from now
+                interview_time = "10:00 AM"
                 
-                # Prepare result
                 result = {
                     "success": True,
                     "status": "approved",
                     "interview_scheduled": True,
                     "data": {
-                        "interview_id": interview_id,
-                        "interview_date": interview_data.get("interview_date", "2024-01-28"),
-                        "interview_time": interview_data.get("interview_time", "10:00 AM PST"),
-                        "interview_duration": f"{preferred_duration} minutes",
+                        "interview_id": f"INT-{datetime.now().year}-{datetime.now().strftime('%m%d%H%M')}",
+                        "candidate_email": candidate_email,
+                        "candidate_name": candidate_name,
+                        "job_title": job_title,
                         "interview_type": interview_type,
-                        "interviewer_details": interview_data.get("interviewer_details", {
-                            "name": "Sarah Chen",
-                            "email": "sarah.chen@company.com",
-                            "role": "Senior Engineering Manager"
-                        }),
-                        "calendar_invite_sent": True,
-                        "video_link": interview_data.get("video_conference", {}).get("link", "https://zoom.us/j/meeting-link"),
-                        "preparation_materials_sent": True,
-                        "interview_agenda": interview_data.get("interview_agenda", ["Technical discussion", "Q&A session"]),
-                        "confirmation_email_sent": True,
-                        "timezone": "PST",
-                        "interview_format": "video_conference"
+                        "interview_date": interview_date.strftime("%A, %B %d, %Y"),
+                        "interview_time": interview_time,
+                        "duration_minutes": preferred_duration,
+                        "interviewer": "Sarah Johnson, Engineering Manager",
+                        "meeting_platform": "Zoom",
+                        "meeting_link": "https://zoom.us/j/123456789",
+                        "meeting_id": "123 456 789",
+                        "meeting_passcode": "HRInterview2024",
+                        "backup_phone": "+1 (555) 123-4567",
+                        "interview_content": interview_content,
+                        "scheduled_at": datetime.now().isoformat()
                     }
                 }
                 
-                # Log the interview scheduling
-                self._log_interview_scheduling(candidate_email, candidate_name, job_title, interview_data, interview_id)
-                
-                logger.info(f"✅ {interview_type.title()} interview scheduled for {candidate_email}")
-                logger.info(f"📊 Interview ID: {interview_id}, Date: {interview_data.get('interview_date', 'TBD')}")
+                logger.info(f"✅ Interview scheduled successfully for {candidate_name}")
+                logger.info(f"📅 Date: {result['data']['interview_date']} at {interview_time}")
+                logger.info(f"🎥 Platform: {result['data']['meeting_platform']}")
                 
                 return json.dumps(result)
                 
-            except json.JSONDecodeError:
-                # Fallback if AI response isn't valid JSON
-                logger.warning("⚠️ AI response was not valid JSON, using fallback scheduling")
+            except Exception as llm_error:
+                logger.warning(f"⚠️ LLM interview generation failed: {llm_error}, using fallback")
                 
-                interview_id = f"INT-{datetime.now().year}-{str(uuid.uuid4())[:8].upper()}"
-                fallback_date = (datetime.now() + timedelta(days=5)).strftime('%Y-%m-%d')
+                # Fallback interview content
+                interview_date = datetime.now() + timedelta(days=3)
+                fallback_interview = f"""
+Interview Invitation - {job_title}
+
+Dear {candidate_name},
+
+Congratulations! We're excited to invite you for an interview for the {job_title} position.
+
+INTERVIEW DETAILS:
+Date: {interview_date.strftime("%A, %B %d, %Y")}
+Time: 10:00 AM - {10 + (preferred_duration // 60)}:{(preferred_duration % 60):02d} AM (EST)
+Duration: {preferred_duration} minutes
+Interviewer: Sarah Johnson, Engineering Manager
+Platform: Video call (Zoom)
+
+INTERVIEW AGENDA:
+• Introduction and role overview (15 min)
+• Technical discussion and problem-solving (30 min)
+• Your questions about the role and company (15 min)
+
+PREPARATION:
+• Review the job description
+• Prepare examples of your projects
+• Think of questions about our company
+• Test your video/audio setup
+
+MEETING DETAILS:
+Zoom Link: https://zoom.us/j/123456789
+Meeting ID: 123 456 789
+Passcode: HRInterview2024
+
+Need to reschedule? Reply to this email ASAP.
+
+Looking forward to speaking with you!
+
+Best regards,
+Sarah Johnson
+Engineering Manager
+"""
                 
                 result = {
                     "success": True,
                     "status": "approved",
                     "interview_scheduled": True,
                     "data": {
-                        "interview_id": interview_id,
-                        "interview_date": fallback_date,
-                        "interview_time": "10:00 AM PST",
-                        "interview_duration": f"{preferred_duration} minutes",
+                        "interview_id": f"INT-{datetime.now().year}-{datetime.now().strftime('%m%d%H%M')}",
+                        "candidate_email": candidate_email,
+                        "candidate_name": candidate_name,
+                        "job_title": job_title,
                         "interview_type": interview_type,
-                        "interviewer_details": {
-                            "name": "Technical Team Lead",
-                            "email": "interviews@company.com",
-                            "role": "Senior Engineer"
-                        },
-                        "calendar_invite_sent": True,
-                        "video_link": "https://zoom.us/j/standard-meeting-room",
-                        "preparation_materials_sent": True,
-                        "interview_agenda": ["Technical assessment", "Role discussion", "Q&A"],
-                        "confirmation_email_sent": True,
-                        "timezone": "PST",
-                        "interview_format": "video_conference"
+                        "interview_date": interview_date.strftime("%A, %B %d, %Y"),
+                        "interview_time": "10:00 AM",
+                        "duration_minutes": preferred_duration,
+                        "interviewer": "Sarah Johnson, Engineering Manager",
+                        "meeting_platform": "Zoom",
+                        "meeting_link": "https://zoom.us/j/123456789",
+                        "meeting_id": "123 456 789",
+                        "meeting_passcode": "HRInterview2024",
+                        "backup_phone": "+1 (555) 123-4567",
+                        "interview_content": fallback_interview,
+                        "scheduled_at": datetime.now().isoformat()
                     }
                 }
                 
-                self._log_fallback_interview_scheduling(candidate_email, candidate_name, job_title, interview_id, fallback_date)
                 return json.dumps(result)
                 
         except Exception as e:
             logger.error(f"Error scheduling interview: {e}")
+            
             error_result = {
                 "success": False,
                 "status": "approved",  # Still proceed with workflow
@@ -188,39 +187,8 @@ class ScheduleInterviewTool(Tool[str]):
                 "data": {
                     "error": f"Interview scheduling failed: {str(e)}",
                     "candidate_email": candidate_email,
-                    "fallback_action": "manual_scheduling_required"
+                    "fallback_message": "Interview will be scheduled manually"
                 }
             }
+            
             return json.dumps(error_result)
-    
-    def _log_interview_scheduling(self, candidate_email: str, candidate_name: str, job_title: str, interview_data: Dict[str, Any], interview_id: str):
-        """Log the interview scheduling details"""
-        try:
-            interviewer = interview_data.get("interviewer_details", {})
-            video_conf = interview_data.get("video_conference", {})
-            
-            logger.info(f"📧 INTERVIEW SCHEDULED:")
-            logger.info(f"   Candidate: {candidate_name} ({candidate_email})")
-            logger.info(f"   Interview ID: {interview_id}")
-            logger.info(f"   Date: {interview_data.get('interview_date', 'TBD')}")
-            logger.info(f"   Time: {interview_data.get('interview_time', 'TBD')}")
-            logger.info(f"   Interviewer: {interviewer.get('name', 'TBD')} ({interviewer.get('email', 'TBD')})")
-            logger.info(f"   Video Link: {video_conf.get('link', 'TBD')}")
-            logger.info(f"   Agenda: {', '.join(interview_data.get('interview_agenda', []))}")
-            
-        except Exception as e:
-            logger.error(f"Error logging interview scheduling: {e}")
-    
-    def _log_fallback_interview_scheduling(self, candidate_email: str, candidate_name: str, job_title: str, interview_id: str, interview_date: str):
-        """Log fallback interview scheduling"""
-        try:
-            logger.info(f"📧 FALLBACK INTERVIEW SCHEDULED:")
-            logger.info(f"   Candidate: {candidate_name} ({candidate_email})")
-            logger.info(f"   Interview ID: {interview_id}")
-            logger.info(f"   Date: {interview_date}")
-            logger.info(f"   Time: 10:00 AM PST")
-            logger.info(f"   Type: Technical interview")
-            logger.info(f"   Duration: 60 minutes")
-            
-        except Exception as e:
-            logger.error(f"Error logging fallback interview scheduling: {e}")

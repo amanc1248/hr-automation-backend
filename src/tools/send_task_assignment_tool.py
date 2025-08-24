@@ -1,6 +1,6 @@
 """
-Send Task Assignment Tool for Portia AI
-Generates and sends technical assessments to candidates
+Send Task Assignment Tool for HR Workflow
+Generates technical assessments for candidates
 """
 
 import logging
@@ -9,7 +9,6 @@ from typing import Dict, Any, Optional, Type
 from datetime import datetime, timedelta
 from portia import Tool, ToolRunContext, Message
 from pydantic import BaseModel, Field
-import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -18,153 +17,158 @@ class SendTaskAssignmentInput(BaseModel):
     candidate_email: str = Field(description="Candidate's email address")
     candidate_name: str = Field(description="Candidate's full name")
     job_title: str = Field(description="Job title they're applying for")
-    job_requirements: str = Field(description="Job requirements and technical skills needed")
-    seniority_level: str = Field(description="Job seniority level (Junior/Mid/Senior)", default="Mid")
+    job_requirements: str = Field(description="Detailed job requirements for the role")
+    seniority_level: str = Field(description="Seniority level of the job (e.g., 'Junior', 'Mid', 'Senior')")
 
 class SendTaskAssignmentTool(Tool[str]):
-    """Tool for generating and sending technical assessments to candidates"""
+    """AI-powered technical assessment generation tool"""
     
     id: str = "send_task_assignment_tool"
     name: str = "Send Task Assignment Tool"
     description: str = (
-        "Generates personalized technical assessment tailored to job requirements and candidate skill level. "
-        "Creates role-appropriate coding challenges, system design questions, or technical problems. "
-        "Sends professionally formatted email with clear instructions, submission guidelines, and deadline."
+        "Generates a personalized technical assessment tailored to specific job requirements and candidate's skill level. "
+        "Creates role-appropriate coding challenges, system design questions, or technical problems that accurately evaluate "
+        "job-relevant competencies. Returns detailed assessment with clear instructions, submission guidelines, and evaluation criteria."
     )
     args_schema: Type[BaseModel] = SendTaskAssignmentInput
     output_schema: tuple[str, str] = (
         "json",
-        "JSON object with 'success' (bool), 'status' ('approved'), 'data' (assessment details), 'email_sent' (bool), 'assessment_id' (str)"
+        "JSON object with 'success' (bool), 'status' ('approved'), 'email_sent' (bool), 'data' (assessment details)"
     )
-    
-    def run(self, context: ToolRunContext, candidate_email: str, candidate_name: str, job_title: str, job_requirements: str, seniority_level: str = "Mid") -> str:
-        """Generate and send technical assessment using Portia's AI capabilities"""
+
+    def run(self, context: ToolRunContext, candidate_email: str, candidate_name: str, job_title: str, job_requirements: str, seniority_level: str) -> str:
+        """Generate a technical assessment for the candidate"""
         try:
             logger.info(f"📝 Generating technical assessment for {candidate_email}")
             
-            # Use Portia's LLM to generate appropriate assessment
+            # Use Portia's LLM to generate assessment content
             llm = context.config.get_default_model()
             
             assessment_prompt = f"""
-            You are an expert technical recruiter creating a comprehensive technical assessment.
+            Generate a comprehensive technical assessment for a candidate applying for {job_title} position.
             
-            CANDIDATE: {candidate_name}
-            EMAIL: {candidate_email}
-            POSITION: {job_title}
-            SENIORITY: {seniority_level}
+            Candidate: {candidate_name} ({candidate_email})
+            Seniority Level: {seniority_level}
+            Job Requirements: {job_requirements}
             
-            JOB REQUIREMENTS:
-            {job_requirements}
+            Create a technical assessment that includes:
+            1. Clear overview of what needs to be built
+            2. Specific technical requirements
+            3. Submission guidelines and timeline
+            4. Evaluation criteria
+            5. Professional and encouraging tone
             
-            Generate a technical assessment that includes:
-            1. 2-3 practical coding problems appropriate for {seniority_level} level
-            2. System design question (if Senior level)
-            3. Clear evaluation criteria
-            4. Estimated completion time
-            5. Professional email content
+            The assessment should be appropriate for the {seniority_level} level and test skills relevant to: {job_requirements}
             
-            Provide a JSON response with:
-            {{
-                "assessment_components": ["component1", "component2", "component3"],
-                "difficulty_level": "appropriate_for_{seniority_level}",
-                "estimated_duration": "3-4 hours",
-                "problems": [
-                    {{
-                        "title": "Problem 1 Title",
-                        "description": "Detailed problem description",
-                        "requirements": ["req1", "req2"],
-                        "evaluation_criteria": ["criteria1", "criteria2"]
-                    }}
-                ],
-                "email_subject": "Technical Assessment - {job_title} Role",
-                "email_body": "Professional email content with instructions",
-                "submission_instructions": "How to submit the assessment",
-                "deadline_days": 3
-            }}
-            
-            Make the assessment challenging but fair for the {seniority_level} level.
+            Format the response as a complete technical assessment document.
             """
             
             messages = [
-                Message(
-                    role="system",
-                    content="You are an expert technical recruiter and assessment designer. Create comprehensive, fair technical assessments that accurately evaluate job-relevant skills. Always respond in valid JSON format."
-                ),
-                Message(
-                    role="user",
-                    content=assessment_prompt
-                )
+                Message(role="system", content="You are an expert technical recruiter creating comprehensive coding assessments."),
+                Message(role="user", content=assessment_prompt)
             ]
             
-            response = llm.get_response(messages)
-            
-            # Parse the AI response
             try:
-                assessment_data = json.loads(response.content)
+                response = llm.get_response(messages)
+                assessment_content = response.value if hasattr(response, 'value') else str(response)
                 
-                # Generate assessment details
-                assessment_id = f"TA-{datetime.now().year}-{str(uuid.uuid4())[:8].upper()}"
-                deadline = datetime.now() + timedelta(days=assessment_data.get("deadline_days", 3))
-                
-                # Prepare result
+                # Create structured result
                 result = {
                     "success": True,
                     "status": "approved",
-                    "email_sent": True,
+                    "email_sent": False,  # Will be handled by email tool in Portia
                     "data": {
-                        "assessment_id": assessment_id,
-                        "assessment_type": "comprehensive_technical_challenge",
-                        "deadline": deadline.isoformat() + "Z",
-                        "estimated_duration": assessment_data.get("estimated_duration", "3-4 hours"),
-                        "email_subject": assessment_data.get("email_subject", f"Technical Assessment - {job_title} Role"),
+                        "assessment_id": f"TA-{datetime.now().year}-{datetime.now().strftime('%m%d%H%M')}",
+                        "assessment_type": "technical_challenge",
                         "candidate_email": candidate_email,
-                        "assessment_components": assessment_data.get("assessment_components", ["coding_challenge", "system_design"]),
+                        "candidate_name": candidate_name,
+                        "job_title": job_title,
+                        "deadline": (datetime.now() + timedelta(days=5)).isoformat(),
+                        "estimated_duration": "3-4 hours",
+                        "assessment_content": assessment_content,
                         "submission_method": "email_with_github_link",
                         "difficulty_level": seniority_level.lower(),
-                        "problems_count": len(assessment_data.get("problems", [])),
-                        "deadline_days": assessment_data.get("deadline_days", 3)
+                        "generated_at": datetime.now().isoformat()
                     }
                 }
                 
-                # Log the email sending
-                self._log_assessment_email(candidate_email, candidate_name, job_title, assessment_data, assessment_id)
-                
-                logger.info(f"✅ Technical assessment generated and sent to {candidate_email}")
-                logger.info(f"📊 Assessment ID: {assessment_id}, Deadline: {deadline.strftime('%Y-%m-%d')}")
+                logger.info(f"✅ Technical assessment generated successfully for {candidate_name}")
+                logger.info(f"📋 Assessment ID: {result['data']['assessment_id']}")
+                logger.info(f"⏰ Deadline: {result['data']['deadline']}")
                 
                 return json.dumps(result)
                 
-            except json.JSONDecodeError:
-                # Fallback if AI response isn't valid JSON
-                logger.warning("⚠️ AI response was not valid JSON, using fallback assessment")
+            except Exception as llm_error:
+                logger.warning(f"⚠️ LLM assessment generation failed: {llm_error}, using fallback")
                 
-                assessment_id = f"TA-{datetime.now().year}-{str(uuid.uuid4())[:8].upper()}"
-                deadline = datetime.now() + timedelta(days=3)
+                # Fallback assessment content
+                fallback_assessment = f"""
+Technical Assessment - {job_title}
+
+Dear {candidate_name},
+
+Thank you for your application! We'd like you to complete a technical assessment to better understand your skills and problem-solving approach.
+
+ASSIGNMENT OVERVIEW:
+Build a simple full-stack application demonstrating your expertise in the technologies we use.
+
+REQUIREMENTS:
+• Frontend: Create a responsive web application
+• Backend: Build RESTful API endpoints  
+• Database: Design and implement a simple schema
+• Documentation: Include setup instructions
+
+SPECIFIC TASKS:
+1. User authentication system
+2. CRUD operations for core entities
+3. Data validation and error handling
+4. Responsive design
+
+SUBMISSION:
+• Host code in a public GitHub repository
+• Include comprehensive README
+• Deploy the application (free tier is fine)
+• Send repository link and live demo URL
+
+TIMELINE: 5 business days from today
+
+EVALUATION:
+• Code quality and organization (25%)
+• Technical implementation (25%)
+• Problem-solving approach (20%)
+• Requirements completeness (20%)
+• Documentation quality (10%)
+
+Questions? Reply to this email.
+
+Best regards,
+Technical Hiring Team
+"""
                 
                 result = {
                     "success": True,
-                    "status": "approved",
-                    "email_sent": True,
+                    "status": "approved", 
+                    "email_sent": False,
                     "data": {
-                        "assessment_id": assessment_id,
+                        "assessment_id": f"TA-{datetime.now().year}-{datetime.now().strftime('%m%d%H%M')}",
                         "assessment_type": "standard_technical_challenge",
-                        "deadline": deadline.isoformat() + "Z",
-                        "estimated_duration": "3-4 hours",
-                        "email_subject": f"Technical Assessment - {job_title} Role",
                         "candidate_email": candidate_email,
-                        "assessment_components": ["coding_challenge", "problem_solving", "best_practices"],
+                        "candidate_name": candidate_name,
+                        "job_title": job_title,
+                        "deadline": (datetime.now() + timedelta(days=5)).isoformat(),
+                        "estimated_duration": "3-4 hours",
+                        "assessment_content": fallback_assessment,
                         "submission_method": "email_with_github_link",
                         "difficulty_level": seniority_level.lower(),
-                        "problems_count": 3,
-                        "deadline_days": 3
+                        "generated_at": datetime.now().isoformat()
                     }
                 }
                 
-                self._log_fallback_assessment_email(candidate_email, candidate_name, job_title, assessment_id)
                 return json.dumps(result)
                 
         except Exception as e:
             logger.error(f"Error generating technical assessment: {e}")
+            
             error_result = {
                 "success": False,
                 "status": "approved",  # Still proceed with workflow
@@ -172,38 +176,8 @@ class SendTaskAssignmentTool(Tool[str]):
                 "data": {
                     "error": f"Assessment generation failed: {str(e)}",
                     "candidate_email": candidate_email,
-                    "fallback_action": "manual_assessment_required"
+                    "fallback_message": "Technical assessment will be sent manually"
                 }
             }
+            
             return json.dumps(error_result)
-    
-    def _log_assessment_email(self, candidate_email: str, candidate_name: str, job_title: str, assessment_data: Dict[str, Any], assessment_id: str):
-        """Log the technical assessment email"""
-        try:
-            email_subject = assessment_data.get("email_subject", f"Technical Assessment - {job_title} Role")
-            email_body = assessment_data.get("email_body", "Technical assessment details")
-            
-            logger.info(f"📧 TECHNICAL ASSESSMENT EMAIL SENT:")
-            logger.info(f"   To: {candidate_email}")
-            logger.info(f"   Subject: {email_subject}")
-            logger.info(f"   Assessment ID: {assessment_id}")
-            logger.info(f"   Components: {', '.join(assessment_data.get('assessment_components', []))}")
-            logger.info(f"   Estimated Duration: {assessment_data.get('estimated_duration', 'N/A')}")
-            logger.info(f"   Deadline: {assessment_data.get('deadline_days', 3)} days")
-            
-        except Exception as e:
-            logger.error(f"Error logging assessment email: {e}")
-    
-    def _log_fallback_assessment_email(self, candidate_email: str, candidate_name: str, job_title: str, assessment_id: str):
-        """Log fallback assessment email"""
-        try:
-            logger.info(f"📧 FALLBACK TECHNICAL ASSESSMENT EMAIL SENT:")
-            logger.info(f"   To: {candidate_email}")
-            logger.info(f"   Subject: Technical Assessment - {job_title} Role")
-            logger.info(f"   Assessment ID: {assessment_id}")
-            logger.info(f"   Type: Standard technical challenge")
-            logger.info(f"   Duration: 3-4 hours")
-            logger.info(f"   Deadline: 3 business days")
-            
-        except Exception as e:
-            logger.error(f"Error logging fallback assessment email: {e}")

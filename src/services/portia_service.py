@@ -188,7 +188,7 @@ class PortiaService:
             """
         elif "technical" in step_name or "assignment" in step_name or "assessment" in step_name:
             task = f"""
-            Use the send_task_assignment_tool to generate and send a technical assessment to the candidate.
+            Use the send_task_assignment_tool to generate a technical assessment for the candidate, then send the assessment via email.
             
             Candidate Details:
             - Name: {candidate_name}
@@ -200,7 +200,13 @@ class PortiaService:
             
             Step Description: {step_description}
             
-            Please use the send_task_assignment_tool to create an appropriate technical assessment for this candidate.
+            Instructions:
+            1. First, use the send_task_assignment_tool to create an appropriate technical assessment for this candidate
+            2. Then, send an email to {candidate_email} with the subject "Technical Assessment - {job_title} Position"
+            3. Include the generated assessment details in the email body
+            4. Make sure the email is professional and includes clear submission guidelines and timeline
+            
+            The email should contain the complete technical assessment with requirements, submission instructions, and evaluation criteria.
             """
         elif "interview" in step_name or "schedule" in step_name:
             task = f"""
@@ -217,7 +223,7 @@ class PortiaService:
             """
         elif "offer" in step_name or "letter" in step_name:
             task = f"""
-            Use the send_offer_letter_tool to generate and send a job offer letter to the candidate.
+            Use the send_offer_letter_tool to generate a comprehensive job offer letter for the candidate, then send the offer via email.
             
             Candidate Details:
             - Name: {candidate_name}
@@ -226,7 +232,13 @@ class PortiaService:
             
             Step Description: {step_description}
             
-            Please use the send_offer_letter_tool to create a comprehensive job offer for this successful candidate.
+            Instructions:
+            1. First, use the send_offer_letter_tool to create a comprehensive job offer for this successful candidate
+            2. Then, send an email to {candidate_email} with the subject "Job Offer - {job_title} Position (Action Required)"
+            3. Include the complete offer details in the email body with salary, benefits, start date, and next steps
+            4. Make sure the email is professional, celebratory, and includes all necessary offer information
+            
+            The email should contain the full job offer with compensation package, benefits overview, timeline, and acceptance instructions.
             """
         elif "review" in step_name and ("technical" in step_name or "assignment" in step_name):
             # Mock assignment requirements for context
