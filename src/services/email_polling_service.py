@@ -793,6 +793,18 @@ class EmailPollingService:
                     next_step_detail_id = await self._get_next_step_detail_id(db, current_workflow['workflow_template_id'], current_step_detail_id)
                     
                     if next_step_detail_id:
+                        # Check if next step should auto-start (only for steps after the first one)
+                        if steps_executed > 1:  # For 2nd step onwards, check auto_start
+                            should_auto_start = await self._should_step_auto_start(db, next_step_detail_id)
+                            if not should_auto_start:
+                                logger.info(f"   ⏸️ Next step requires manual trigger (auto_start=false): {next_step_detail_id}")
+                                
+                                # Update to next step but don't execute it
+                                await self._update_candidate_workflow_current_step(db, current_workflow['id'], next_step_detail_id)
+                                logger.info(f"   📋 Workflow paused at step: {next_step_detail_id}")
+                                logger.info(f"   💡 Step will execute when triggered manually or by specific event")
+                                break
+                        
                         logger.info(f"   ➡️ Moving to next step: {next_step_detail_id}")
                         
                         # Update current step in candidate workflow
@@ -1000,6 +1012,34 @@ class EmailPollingService:
         except Exception as e:
             logger.error(f"Error getting next step detail ID: {e}")
             return None
+    
+    async def _should_step_auto_start(self, db: AsyncSession, step_detail_id: str) -> bool:
+        """Check if a workflow step should auto-start based on workflow_step_detail.auto_start"""
+        try:
+            from sqlalchemy import select
+            from models.workflow import WorkflowStepDetail
+            
+            # Get the workflow step detail to check auto_start flag
+            step_detail_result = await db.execute(
+                select(WorkflowStepDetail.auto_start).where(
+                    WorkflowStepDetail.id == step_detail_id,
+                    WorkflowStepDetail.is_deleted == False
+                )
+            )
+            step_detail = step_detail_result.scalar_one_or_none()
+            
+            if step_detail is not None:
+                auto_start = bool(step_detail)
+                logger.info(f"   🔍 Step {step_detail_id} auto_start: {auto_start}")
+                return auto_start
+            else:
+                logger.warning(f"   ⚠️ Step detail not found: {step_detail_id}, defaulting to auto_start=False")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error checking auto_start for step {step_detail_id}: {e}")
+            # Default to False (manual trigger) if there's an error
+            return False
     
     async def _update_candidate_workflow_current_step(self, db: AsyncSession, workflow_id: str, next_step_detail_id: str):
         """Update the current_step_detail_id in candidate_workflow"""
