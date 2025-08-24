@@ -400,12 +400,8 @@ class EmailPollingService:
                 logger.info(f"   ✅ Found existing candidate workflow: {existing_workflow['id']}")
                 logger.info(f"   📋 Current step ID: {existing_workflow.get('current_step_detail_id', 'Not set')}")
                 
-                # Execute current workflow step
-                step_result = await self._execute_workflow_step(db, existing_workflow, candidate, job, email)
-                if step_result:
-                    logger.info(f"   🎯 Workflow step executed: {step_result.get('status', 'unknown')}")
-                else:
-                    logger.warning(f"   ⚠️ Failed to execute workflow step")
+                # Execute workflow progression (current step and potentially next steps)
+                await self._execute_workflow_progression(db, existing_workflow, candidate, job, email)
                     
             else:
                 logger.info(f"   🆕 Creating new candidate workflow...")
@@ -415,12 +411,8 @@ class EmailPollingService:
                     logger.info(f"   ✅ Created new candidate workflow: {new_workflow['id']}")
                     logger.info(f"   📋 Starting with step ID: {new_workflow.get('current_step_detail_id', 'Not set')}")
                     
-                    # Execute first workflow step
-                    step_result = await self._execute_workflow_step(db, new_workflow, candidate, job, email)
-                    if step_result:
-                        logger.info(f"   🎯 Workflow step executed: {step_result.get('status', 'unknown')}")
-                    else:
-                        logger.warning(f"   ⚠️ Failed to execute workflow step")
+                    # Execute workflow progression starting from first step
+                    await self._execute_workflow_progression(db, new_workflow, candidate, job, email)
                 else:
                     logger.warning(f"   ⚠️ Failed to create candidate workflow")
                     logger.info(f"   💡 Workflow processing stopped - candidate and application were saved successfully")
@@ -579,6 +571,7 @@ class EmailPollingService:
                     "id": existing_workflow.id,
                     "name": existing_workflow.name,
                     "current_step_detail_id": existing_workflow.current_step_detail_id,
+                    "workflow_template_id": existing_workflow.workflow_template_id,
                     "started_at": existing_workflow.started_at,
                     "status": "existing"
                 }
@@ -646,6 +639,7 @@ class EmailPollingService:
                 "id": workflow_instance.id,
                 "name": workflow_instance.name,
                 "current_step_detail_id": first_step.id if first_step else None,
+                "workflow_template_id": workflow_template_id,
                 "started_at": workflow_instance.started_at,
                 "status": "new"
             }
@@ -757,6 +751,83 @@ class EmailPollingService:
             logger.error(f"Error creating application: {e}")
             return None
 
+    async def _execute_workflow_progression(self, db: AsyncSession, workflow: Dict[str, Any], candidate: Dict[str, Any], job: Dict[str, Any], email: Dict[str, Any]):
+        """Execute workflow progression - current step and continue to next steps if approved"""
+        try:
+            logger.info(f"   🚀 Starting workflow progression...")
+            
+            # Maximum steps to prevent infinite loops
+            max_steps = 10
+            steps_executed = 0
+            current_workflow = workflow
+            
+            while steps_executed < max_steps:
+                steps_executed += 1
+                
+                # Get current step details
+                current_step_detail_id = current_workflow.get('current_step_detail_id')
+                if not current_step_detail_id:
+                    logger.info(f"   ✅ Workflow completed - no more steps to execute")
+                    break
+                
+                logger.info(f"   📋 Executing step {steps_executed}: {current_step_detail_id}")
+                
+                # Execute current workflow step
+                step_result = await self._execute_workflow_step(db, current_workflow, candidate, job, email)
+                
+                if not step_result:
+                    logger.warning(f"   ⚠️ Step execution failed - stopping workflow progression")
+                    break
+                
+                step_status = step_result.get('status', 'unknown')
+                logger.info(f"   🎯 Step result: {step_status}")
+                
+                # Update execution log
+                await self._update_workflow_execution_log(db, current_workflow['id'], step_result, current_step_detail_id)
+                
+                # Check if workflow should continue
+                if step_status == 'approved':
+                    logger.info(f"   ✅ Step approved - checking for next step...")
+                    
+                    # Get next step
+                    next_step_detail_id = await self._get_next_step_detail_id(db, current_workflow['workflow_template_id'], current_step_detail_id)
+                    
+                    if next_step_detail_id:
+                        logger.info(f"   ➡️ Moving to next step: {next_step_detail_id}")
+                        
+                        # Update current step in candidate workflow
+                        await self._update_candidate_workflow_current_step(db, current_workflow['id'], next_step_detail_id)
+                        
+                        # Update current workflow data for next iteration
+                        current_workflow['current_step_detail_id'] = next_step_detail_id
+                        # Ensure workflow_template_id is available for next iteration
+                        if 'workflow_template_id' not in current_workflow:
+                            current_workflow['workflow_template_id'] = workflow.get('workflow_template_id')
+                        
+                    else:
+                        logger.info(f"   🎉 Workflow completed successfully - no more steps")
+                        await self._mark_workflow_completed(db, current_workflow['id'])
+                        break
+                        
+                elif step_status == 'rejected':
+                    logger.info(f"   ❌ Step rejected - workflow terminated")
+                    await self._mark_workflow_rejected(db, current_workflow['id'], step_result.get('data', 'Step rejected'))
+                    break
+                    
+                else:
+                    logger.info(f"   ⏸️ Step status '{step_status}' - workflow paused (manual intervention may be required)")
+                    break
+            
+            if steps_executed >= max_steps:
+                logger.warning(f"   ⚠️ Workflow progression stopped - maximum steps ({max_steps}) reached")
+            
+            logger.info(f"   📊 Workflow progression completed: {steps_executed} steps executed")
+            
+        except Exception as e:
+            logger.error(f"Error in workflow progression: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+
     async def _execute_workflow_step(self, db: AsyncSession, workflow: Dict[str, Any], candidate: Dict[str, Any], job: Dict[str, Any], email: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Execute the current workflow step using Portia"""
         try:
@@ -855,7 +926,8 @@ class EmailPollingService:
             result = await portia_service.execute_workflow_step(step_description, context_data)
             
             if result:
-                logger.info(f"   🎯 Portia Result: {result.get('status', 'unknown')} - {result.get('data', 'No details')[:100]}...")
+                data_preview = str(result.get('data', 'No details'))[:100] if result.get('data') else 'No details'
+                logger.info(f"   🎯 Portia Result: {result.get('status', 'unknown')} - {data_preview}...")
                 return result
             else:
                 logger.error(f"   ❌ Portia execution returned no result")
@@ -875,6 +947,193 @@ class EmailPollingService:
                 "data": f"Portia execution error: {str(e)}",
                 "status": "approved"  # Still proceed with workflow
             }
+    
+    async def _get_next_step_detail_id(self, db: AsyncSession, workflow_template_id: str, current_step_detail_id: str) -> Optional[str]:
+        """Get the next step detail ID in the workflow sequence"""
+        try:
+            from sqlalchemy import select
+            from models.workflow import WorkflowTemplate, WorkflowStepDetail
+            
+            # Get the workflow template to access steps_execution_id
+            template_result = await db.execute(
+                select(WorkflowTemplate).where(WorkflowTemplate.id == workflow_template_id)
+            )
+            template = template_result.scalar_one_or_none()
+            
+            if not template or not template.steps_execution_id:
+                logger.warning(f"   ⚠️ No workflow template or steps found for template: {workflow_template_id}")
+                return None
+            
+            # Get current step detail to find its order_number
+            current_step_result = await db.execute(
+                select(WorkflowStepDetail).where(
+                    WorkflowStepDetail.id == current_step_detail_id,
+                    WorkflowStepDetail.is_deleted == False
+                )
+            )
+            current_step = current_step_result.scalar_one_or_none()
+            
+            if not current_step:
+                logger.warning(f"   ⚠️ Current step detail not found: {current_step_detail_id}")
+                return None
+            
+            current_order = current_step.order_number
+            next_order = current_order + 1
+            
+            # Find the next step in the template's steps_execution_id with next order_number
+            next_step_result = await db.execute(
+                select(WorkflowStepDetail).where(
+                    WorkflowStepDetail.id.in_(template.steps_execution_id),
+                    WorkflowStepDetail.order_number == next_order,
+                    WorkflowStepDetail.is_deleted == False
+                ).limit(1)
+            )
+            next_step = next_step_result.scalar_one_or_none()
+            
+            if next_step:
+                logger.info(f"   ➡️ Found next step: order {next_order}, ID: {next_step.id}")
+                return str(next_step.id)
+            else:
+                logger.info(f"   🏁 No next step found after order {current_order} - workflow complete")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error getting next step detail ID: {e}")
+            return None
+    
+    async def _update_candidate_workflow_current_step(self, db: AsyncSession, workflow_id: str, next_step_detail_id: str):
+        """Update the current_step_detail_id in candidate_workflow"""
+        try:
+            from sqlalchemy import update
+            from models.workflow import CandidateWorkflow
+            from datetime import datetime
+            
+            update_query = update(CandidateWorkflow).where(
+                CandidateWorkflow.id == workflow_id
+            ).values(
+                current_step_detail_id=next_step_detail_id,
+                updated_at=datetime.utcnow()
+            )
+            
+            await db.execute(update_query)
+            await db.commit()
+            
+            logger.info(f"   ✅ Updated candidate workflow current step: {next_step_detail_id}")
+            
+        except Exception as e:
+            logger.error(f"Error updating candidate workflow current step: {e}")
+            await db.rollback()
+    
+    async def _update_workflow_execution_log(self, db: AsyncSession, workflow_id: str, step_result: Dict[str, Any], step_detail_id: str):
+        """Update the execution_log in candidate_workflow with step result"""
+        try:
+            from sqlalchemy import select, update
+            from models.workflow import CandidateWorkflow
+            from datetime import datetime
+            
+            # Get current execution log
+            result = await db.execute(
+                select(CandidateWorkflow.execution_log).where(CandidateWorkflow.id == workflow_id)
+            )
+            current_log = result.scalar_one_or_none() or []
+            
+            # Add new log entry (convert UUIDs to strings for JSON serialization)
+            log_entry = {
+                "timestamp": datetime.utcnow().isoformat(),
+                "step_detail_id": str(step_detail_id),
+                "step_result": {
+                    "success": step_result.get('success', False),
+                    "status": step_result.get('status', 'unknown'),
+                    "data": str(step_result.get('data', ''))[:200]  # Truncate data to avoid large logs
+                },
+                "status": step_result.get('status', 'unknown'),
+                "success": step_result.get('success', False)
+            }
+            
+            current_log.append(log_entry)
+            
+            # Update the execution log
+            update_query = update(CandidateWorkflow).where(
+                CandidateWorkflow.id == workflow_id
+            ).values(
+                execution_log=current_log,
+                updated_at=datetime.utcnow()
+            )
+            
+            await db.execute(update_query)
+            await db.commit()
+            
+            logger.info(f"   📝 Updated execution log for workflow: {workflow_id}")
+            
+        except Exception as e:
+            logger.error(f"Error updating workflow execution log: {e}")
+            await db.rollback()
+    
+    async def _mark_workflow_completed(self, db: AsyncSession, workflow_id: str):
+        """Mark workflow as completed"""
+        try:
+            from sqlalchemy import update
+            from models.workflow import CandidateWorkflow
+            from datetime import datetime
+            
+            update_query = update(CandidateWorkflow).where(
+                CandidateWorkflow.id == workflow_id
+            ).values(
+                current_step_detail_id=None,  # No more steps
+                completed_at=datetime.utcnow(),
+                updated_at=datetime.utcnow()
+            )
+            
+            await db.execute(update_query)
+            await db.commit()
+            
+            logger.info(f"   🎉 Marked workflow as completed: {workflow_id}")
+            
+        except Exception as e:
+            logger.error(f"Error marking workflow as completed: {e}")
+            await db.rollback()
+    
+    async def _mark_workflow_rejected(self, db: AsyncSession, workflow_id: str, rejection_reason: str):
+        """Mark workflow as rejected"""
+        try:
+            from sqlalchemy import select, update
+            from models.workflow import CandidateWorkflow
+            from datetime import datetime
+            
+            # Get current execution log to add rejection entry
+            result = await db.execute(
+                select(CandidateWorkflow.execution_log).where(CandidateWorkflow.id == workflow_id)
+            )
+            current_log = result.scalar_one_or_none() or []
+            
+            # Add rejection log entry
+            rejection_entry = {
+                "timestamp": datetime.utcnow().isoformat(),
+                "event": "workflow_rejected",
+                "reason": rejection_reason,
+                "status": "rejected"
+            }
+            
+            current_log.append(rejection_entry)
+            
+            update_query = update(CandidateWorkflow).where(
+                CandidateWorkflow.id == workflow_id
+            ).values(
+                current_step_detail_id=None,  # No more steps
+                completed_at=datetime.utcnow(),
+                execution_log=current_log,
+                updated_at=datetime.utcnow()
+            )
+            
+            await db.execute(update_query)
+            await db.commit()
+            
+            logger.info(f"   ❌ Marked workflow as rejected: {workflow_id}")
+            logger.info(f"   📝 Rejection reason: {rejection_reason}")
+            
+        except Exception as e:
+            logger.error(f"Error marking workflow as rejected: {e}")
+            await db.rollback()
             
     async def _update_tokens_in_db(self, config_id: str, new_tokens: Dict[str, Any]):
         """Update tokens in the database after refresh"""
