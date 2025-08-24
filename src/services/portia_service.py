@@ -6,7 +6,7 @@ Handles workflow step execution using Portia AI
 import logging
 import json
 from typing import Dict, Any, Optional
-from portia import Portia, Config, InMemoryToolRegistry
+from portia import Portia, Config, DefaultToolRegistry, StorageClass, LogLevel
 from tools.resume_screening_tool import ResumeScreeningTool
 from tools.send_task_assignment_tool import SendTaskAssignmentTool
 from tools.schedule_interview_tool import ScheduleInterviewTool
@@ -23,16 +23,17 @@ class PortiaService:
         self._initialize_portia()
     
     def _initialize_portia(self):
-        """Initialize Portia with HR workflow tools"""
+        """Initialize Portia with HR workflow tools and real Gmail integration"""
         try:
-            # Create Portia config
+            # Create Portia config with cloud storage for real email integration
             config = Config.from_default(
+                storage_class=StorageClass.CLOUD,
                 default_model="openai/gpt-4o-mini",
-                default_log_level="INFO"
+                default_log_level=LogLevel.INFO
             )
             
-            # Create tool registry with our HR tools
-            hr_tools = [
+            # Create custom HR tools
+            custom_hr_tools = [
                 ResumeScreeningTool(),
                 SendTaskAssignmentTool(),
                 ScheduleInterviewTool(),
@@ -40,15 +41,16 @@ class PortiaService:
                 ReviewTechnicalAssignmentTool(),
             ]
             
-            tool_registry = InMemoryToolRegistry.from_local_tools(hr_tools)
+            # Use DefaultToolRegistry (includes Gmail tools) + our custom tools
+            tool_registry = DefaultToolRegistry(config) + custom_hr_tools
             
-            # Initialize Portia
+            # Initialize Portia with real email capabilities
             self.portia = Portia(
                 config=config,
                 tools=tool_registry
             )
             
-            logger.info(f"✅ Portia initialized with {len(hr_tools)} HR workflow tools")
+            logger.info(f"✅ Portia initialized with DefaultToolRegistry (includes Gmail) + {len(custom_hr_tools)} custom HR tools")
             
         except Exception as e:
             logger.error(f"Failed to initialize Portia: {e}")
