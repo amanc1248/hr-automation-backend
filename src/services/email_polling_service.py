@@ -157,17 +157,20 @@ class EmailPollingService:
             return None
             
     async def _fetch_recent_emails(self, email_address: str, access_token: str) -> List[Dict[str, Any]]:
-        """Fetch recent emails from Gmail"""
+        """Fetch recent unread emails from Gmail Primary inbox only (excludes Promotions, Social, Updates tabs)"""
         try:
             # Calculate time range (last 24 hours)
             now = datetime.utcnow()
             yesterday = now - timedelta(days=1)
             
-            # Format for Gmail API query
+            # Format for Gmail API query (YYYY/MM/DD format)
             after_date = yesterday.strftime('%Y/%m/%d')
             
-            # Gmail API query for recent emails
-            query = f'after:{after_date}'
+            # Gmail API query for unread emails in Primary inbox only from last 24 hours
+            # Use label-based filtering to exclude category tabs
+            query = f'is:unread in:inbox -category:promotions -category:social -category:updates -category:forums after:{after_date}'
+            
+            logger.info(f"🔍 Polling {email_address} with query: '{query}'")
             
             async with httpx.AsyncClient() as client:
                 response = await client.get(
@@ -177,7 +180,7 @@ class EmailPollingService:
                         'Content-Type': 'application/json'
                     },
                     params={
-                        'q': query,
+                        'q': query,  # Use the proper query with category exclusions
                         'maxResults': 50,  # Limit results
                         'includeSpamTrash': False
                     },
@@ -188,16 +191,22 @@ class EmailPollingService:
                     data = response.json()
                     messages = data.get('messages', [])
                     
+                    logger.info(f"📊 Found {len(messages)} unread emails in Primary inbox for {email_address}")
+                    
                     # Get full email details for each message
                     emails = []
-                    for msg in messages[:10]:  # Process only first 10 to avoid rate limits
+                    for i, msg in enumerate(messages[:10]):  # Process only first 10 to avoid rate limits
+                        logger.info(f"📥 Fetching email {i+1}/{min(len(messages), 10)} (ID: {msg['id']})")
                         email_detail = await self._fetch_email_detail(email_address, access_token, msg['id'])
                         if email_detail:
                             emails.append(email_detail)
-                            
+                    
+                    logger.info(f"✅ Successfully fetched {len(emails)} email details")
                     return emails
                 else:
-                    logger.error(f"Failed to fetch emails: {response.status_code} - {response.text}")
+                    logger.error(f"❌ Failed to fetch emails: {response.status_code} - {response.text}")
+                    logger.error(f"   📧 Email: {email_address}")
+                    logger.error(f"   🔍 Query: {query}")
                     return []
                     
         except Exception as e:
@@ -249,7 +258,10 @@ class EmailPollingService:
             from_email = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown')
             date = next((h['value'] for h in headers if h['name'] == 'Date'), 'Unknown')
             
-            logger.info(f"📧 Processing email: {subject} from {from_email}")
+            logger.info(f"📧 Processing email:")
+            logger.info(f"   📋 Subject: {subject}")
+            logger.info(f"   👤 From: {from_email}")
+            logger.info(f"   📅 Date: {date}")
             
             # Check if this looks like a job application
             if self._is_job_application(subject, from_email):
@@ -266,10 +278,39 @@ class EmailPollingService:
         subject_lower = subject.lower()
         from_lower = from_email.lower()
         
+        # First, filter out promotional/marketing emails
+        promotional_keywords = [
+            'discount', 'sale', 'offer', 'deal', 'promo', 'coupon', 'save', 
+            'limited time', 'free shipping', 'newsletter', 'unsubscribe',
+            'marketing', 'notification', 'alert', 'update', 'new feature',
+            'product', 'service', 'buy now', 'shop', 'store', 'purchase',
+            'trip', 'travel', 'hotel', 'vacation', 'booking', 'reservation',
+            'conference', 'event', 'webinar', 'seminar', 'workshop',
+            'startup', 'showcase', 'demo', 'launch', 'announcement'
+        ]
+        
+        promotional_domains = [
+            'tripadvisor.com', 'gucci.com', 'lovable.dev', 'yourstory.com',
+            'mobbin.com', 'coursiv.co', 'vervecoffee.com', 'sanimabank.com',
+            'notifications', 'no-reply', 'noreply', 'marketing', 'promo'
+        ]
+        
+        # Filter out promotional emails
+        for keyword in promotional_keywords:
+            if keyword in subject_lower:
+                logger.debug(f"📝 Filtered out promotional email with keyword '{keyword}': {subject}")
+                return False
+                
+        for domain in promotional_domains:
+            if domain in from_lower:
+                logger.debug(f"📝 Filtered out promotional email from domain '{domain}': {from_email}")
+                return False
+        
         # Keywords that suggest job applications
         job_keywords = [
             'application', 'resume', 'cv', 'job', 'position', 'role',
-            'candidate', 'apply', 'hiring', 'career', 'employment'
+            'candidate', 'apply', 'hiring', 'career', 'employment',
+            'interview', 'opportunity', 'opening'
         ]
         
         # Check subject for job-related keywords
