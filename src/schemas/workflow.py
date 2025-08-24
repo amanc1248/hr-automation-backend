@@ -88,6 +88,7 @@ class WorkflowStepForTemplate(BaseModel):
     auto_start: bool = False
     required_human_approval: bool = False
     number_of_approvals_needed: Optional[int] = Field(None, ge=1)
+    approvers: List[UUID] = Field(default_factory=list)  # Array of user IDs who can approve this step
     order_number: int = Field(..., ge=1)
 
 class WorkflowTemplateCreateWithSteps(BaseModel):

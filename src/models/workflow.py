@@ -40,6 +40,7 @@ class WorkflowStepDetail(BaseModel):
     auto_start = Column(Boolean, nullable=False, default=False)
     required_human_approval = Column(Boolean, nullable=False, default=False)
     number_of_approvals_needed = Column(Integer, nullable=True)
+    approvers = Column(JSONB, default=list, nullable=False)  # Array of user IDs who can approve this step
     status = Column(Text, nullable=False, default="awaiting")  # awaiting, finished, rejected
     order_number = Column(Integer, nullable=False)
     is_deleted = Column(Boolean, default=False, nullable=False)

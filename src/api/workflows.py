@@ -193,6 +193,7 @@ async def create_workflow_template_with_steps(
                 auto_start=step.auto_start,
                 required_human_approval=step.required_human_approval,
                 number_of_approvals_needed=step.number_of_approvals_needed,
+                approvers=step.approvers,
                 order_number=step.order_number,
                 status="awaiting"
             )
@@ -274,6 +275,7 @@ async def update_workflow_template(
                 auto_start=step.auto_start,
                 required_human_approval=step.required_human_approval,
                 number_of_approvals_needed=step.number_of_approvals_needed,
+                approvers=step.approvers,
                 order_number=step.order_number,
                 status="awaiting"
             )
