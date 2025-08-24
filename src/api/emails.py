@@ -142,3 +142,37 @@ async def test_email_polling(
             status_code=500,
             detail=f"Failed to test email polling: {str(e)}"
         )
+
+@router.post("/polling/trigger")
+async def trigger_email_polling_and_workflows(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Manually trigger email polling and start workflows for job applications
+    This bypasses the scheduled polling and processes emails immediately
+    """
+    try:
+        logger.info("🚀 Manual email polling and workflow trigger initiated")
+        
+        # Run the polling and workflow processing
+        result = await email_polling_service._poll_all_accounts()
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "message": "Manual email polling and workflow processing completed",
+                "data": {
+                    "polling_result": result,
+                    "message": "Check backend logs for detailed email processing information"
+                }
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to trigger email polling and workflows: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to trigger email polling and workflows: {str(e)}"
+        )

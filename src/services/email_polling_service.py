@@ -16,7 +16,7 @@ class EmailPollingService:
     
     def __init__(self):
         self.is_running = False
-        self.polling_interval = 3600  # Poll every 60 seconds
+        self.polling_interval = 86400  # Poll every 60 seconds
         self.polling_task = None
         
     async def start_polling(self):
