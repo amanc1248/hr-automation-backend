@@ -65,7 +65,13 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],  # React/Vite dev servers
+    allow_origins=[
+        "http://localhost:3000", 
+        "http://localhost:5173",  # Local development
+        "https://hiring-automation-frontend.vercel.app",  # Vercel production
+        "https://hiring-automation-frontend-3ly6vhsk0-amanc1248s-projects.vercel.app",  # Vercel deployment URL
+        "https://*.vercel.app",  # All Vercel preview deployments
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
