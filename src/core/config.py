@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     # Security
     SECRET_KEY: str = Field(default="your-secret-key-change-in-production", description="JWT secret key")
     ALGORITHM: str = Field(default="HS256", description="JWT algorithm")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=30, description="Access token expiration")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=180, description="Access token expiration")
     REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=7, description="Refresh token expiration")
     
     # Application Settings
