@@ -16,7 +16,7 @@ from models.user import Profile
 
 # Gmail OAuth scopes
 GMAIL_SCOPES = [
-    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.modify',  # Changed from readonly to modify (includes read + modify)
     'https://www.googleapis.com/auth/gmail.send', 
     'https://www.googleapis.com/auth/calendar',
     'https://www.googleapis.com/auth/userinfo.email'

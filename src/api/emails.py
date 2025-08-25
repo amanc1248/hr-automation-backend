@@ -176,3 +176,35 @@ async def trigger_email_polling_and_workflows(
             status_code=500,
             detail=f"Failed to trigger email polling and workflows: {str(e)}"
         )
+
+@router.post("/polling/configure")
+async def configure_polling_interval(
+    interval_minutes: int,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Configure the automatic email polling interval
+    """
+    try:
+        interval_seconds = interval_minutes * 60
+        new_interval = email_polling_service.set_polling_interval(interval_seconds)
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "message": f"Polling interval updated to {new_interval} seconds ({new_interval/60:.1f} minutes)",
+                "data": {
+                    "interval_seconds": new_interval,
+                    "interval_minutes": new_interval / 60,
+                    "note": "If polling is currently running, restart it to apply the new interval"
+                }
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to configure polling interval: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to configure polling interval: {str(e)}"
+        )

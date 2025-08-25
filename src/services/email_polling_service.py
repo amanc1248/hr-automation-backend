@@ -16,7 +16,7 @@ class EmailPollingService:
     
     def __init__(self):
         self.is_running = False
-        self.polling_interval = 86400  # Poll every 60 seconds
+        self.polling_interval = 30  # Poll every 5 minutes (300 seconds)
         self.polling_task = None
         
     async def start_polling(self):
@@ -51,22 +51,40 @@ class EmailPollingService:
         """Get the current polling service status"""
         return {
             "is_running": self.is_running,
+            "polling_interval_seconds": self.polling_interval,
+            "polling_interval_minutes": self.polling_interval / 60,
             "started_at": None,  # TODO: Add started_at timestamp tracking
             "last_poll": None,   # TODO: Add last_poll timestamp tracking
             "poll_count": 0,     # TODO: Add poll count tracking
             "error_count": 0     # TODO: Add error count tracking
         }
+    
+    def set_polling_interval(self, interval_seconds: int):
+        """Set the polling interval in seconds"""
+        if interval_seconds < 60:  # Minimum 1 minute
+            interval_seconds = 60
+        if interval_seconds > 86400:  # Maximum 24 hours
+            interval_seconds = 86400
+            
+        self.polling_interval = interval_seconds
+        logger.info(f"📅 Polling interval updated to {interval_seconds} seconds ({interval_seconds/60:.1f} minutes)")
+        return self.polling_interval
         
     async def _poll_loop(self):
         """Main polling loop"""
+        poll_count = 0
         while self.is_running:
             try:
+                poll_count += 1
+                logger.info(f"🔄 Starting email poll #{poll_count} (interval: {self.polling_interval/60:.1f} minutes)")
                 await self._poll_all_accounts()
+                logger.info(f"✅ Poll #{poll_count} completed. Next poll in {self.polling_interval/60:.1f} minutes")
                 await asyncio.sleep(self.polling_interval)
             except asyncio.CancelledError:
+                logger.info("🛑 Polling loop cancelled")
                 break
             except Exception as e:
-                logger.error(f"Error in polling loop: {e}")
+                logger.error(f"❌ Error in polling loop (poll #{poll_count}): {e}")
                 await asyncio.sleep(10)  # Wait 10 seconds before retrying
                 
     async def _poll_all_accounts(self):
@@ -846,6 +864,11 @@ class EmailPollingService:
                 
                 # Update execution log
                 await self._update_workflow_execution_log(db, current_workflow['id'], step_result, current_step_detail_id)
+                
+                # Mark email as read after successful step execution
+                if step_result.get('success', False):
+                    await self._mark_email_as_read(email)
+                    logger.info(f"   📧 Email marked as read after successful step execution")
                 
                 # Check if workflow should continue
                 if step_status == 'approved':
@@ -1713,6 +1736,78 @@ class EmailPollingService:
                 
         except Exception as e:
             logger.error(f"Error updating tokens in database: {e}")
+    
+    async def _mark_email_as_read(self, email: Dict[str, Any]):
+        """Mark an email as read using Gmail API"""
+        try:
+            # Extract email metadata
+            email_id = email.get('id')
+            if not email_id:
+                logger.warning("   ⚠️ No email ID found, cannot mark as read")
+                return
+            
+            # Extract recipient email to find the appropriate Gmail config
+            recipient_email = None
+            if 'payload' in email and 'headers' in email['payload']:
+                headers = email['payload']['headers']
+                for header in headers:
+                    if header['name'] == 'To':
+                        recipient_email = header['value']
+                        break
+            
+            if not recipient_email:
+                logger.warning("   ⚠️ Could not determine recipient email, cannot mark as read")
+                return
+            
+            # Clean up email address (remove display names)
+            import re
+            email_match = re.search(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', recipient_email)
+            if email_match:
+                recipient_email = email_match.group(1)
+            
+            # Get Gmail config for this email address
+            from services.gmail_service import GmailService
+            gmail_service = GmailService()
+            
+            # Get database session
+            from core.database import get_db
+            async for db in get_db():
+                gmail_config = await gmail_service.get_gmail_config_by_email(db, recipient_email)
+                break
+            
+            if not gmail_config:
+                logger.warning(f"   ⚠️ No Gmail config found for {recipient_email}, cannot mark email as read")
+                return
+            
+            # Get valid access token
+            access_token = await gmail_service.get_valid_access_token(gmail_config)
+            if not access_token:
+                logger.warning(f"   ⚠️ No valid access token for {recipient_email}, cannot mark email as read")
+                return
+            
+            # Mark email as read using Gmail API
+            import httpx
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f'https://gmail.googleapis.com/gmail/v1/users/{recipient_email}/messages/{email_id}/modify',
+                    headers={
+                        'Authorization': f'Bearer {access_token}',
+                        'Content-Type': 'application/json'
+                    },
+                    json={
+                        'removeLabelIds': ['UNREAD']  # Remove the UNREAD label to mark as read
+                    },
+                    timeout=10.0
+                )
+                
+                if response.status_code == 200:
+                    logger.info(f"   ✅ Email {email_id[:8]}... marked as read successfully")
+                else:
+                    logger.warning(f"   ⚠️ Failed to mark email as read: {response.status_code} - {response.text}")
+                    
+        except Exception as e:
+            logger.error(f"   ❌ Error marking email as read: {e}")
+            # Don't raise the exception - email marking is not critical to workflow execution
 
 # Global instance
 email_polling_service = EmailPollingService()
