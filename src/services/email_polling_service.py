@@ -772,8 +772,22 @@ class EmailPollingService:
                 
                 logger.info(f"   📋 Executing step {steps_executed}: {current_step_detail_id}")
                 
+                # Check if this step requires human approval
+                approval_status = await self._check_approval_requirements(db, current_step_detail_id, current_workflow['id'], candidate, job)
+                
+                if approval_status == "awaiting_approval":
+                    logger.info(f"   ⏸️ Step requires approval - workflow paused")
+                    logger.info(f"   📧 Approval requests have been sent to approvers")
+                    break
+                elif approval_status == "rejected":
+                    logger.info(f"   ❌ Step was rejected by approvers - workflow terminated")
+                    await self._mark_workflow_rejected(db, current_workflow['id'], "Step rejected by approvers")
+                    break
+                elif approval_status == "approved":
+                    logger.info(f"   ✅ Step approved by approvers - proceeding with execution")
+                
                 # Only use AI verification for the first step (steps_executed == 0)
-                if steps_executed == 0:
+                if steps_executed == 1:
                     # Use AI to verify if this step should execute based on email content
                     should_execute_step = await self._ai_verify_step_execution(db, current_step_detail_id, email, candidate, job)
                     
@@ -807,7 +821,7 @@ class EmailPollingService:
                     
                     if next_step_detail_id:
                         # Check if next step should auto-start (only for steps after the first one)
-                        if steps_executed > 0:  # For 2nd step onwards, check auto_start
+                        if steps_executed > 1:  # For 2nd step onwards, check auto_start
                             should_auto_start = await self._should_step_auto_start(db, next_step_detail_id)
                             if not should_auto_start:
                                 logger.info(f"   ⏸️ Next step requires manual trigger (auto_start=false): {next_step_detail_id}")
@@ -1241,6 +1255,154 @@ class EmailPollingService:
         except Exception as e:
             logger.error(f"Error in AI step suggestion: {e}")
             return None
+    
+    async def _check_approval_requirements(self, db: AsyncSession, step_detail_id: str, candidate_workflow_id: str, candidate: Dict[str, Any], job: Dict[str, Any]) -> str:
+        """
+        Check if step requires approval and handle approval process.
+        Returns: 'approved', 'rejected', 'awaiting_approval', or 'no_approval_needed'
+        """
+        try:
+            from sqlalchemy import select, func
+            from models.workflow import WorkflowStepDetail
+            from models.approval import WorkflowApprovalRequest, WorkflowApproval
+            
+            # Get step details to check if approval is required
+            step_result = await db.execute(
+                select(WorkflowStepDetail).where(
+                    WorkflowStepDetail.id == step_detail_id,
+                    WorkflowStepDetail.is_deleted == False
+                )
+            )
+            step_detail = step_result.scalar_one_or_none()
+            
+            if not step_detail:
+                logger.warning(f"   ⚠️ Step detail not found: {step_detail_id}")
+                return "no_approval_needed"
+            
+            # Check if this step requires human approval
+            if not step_detail.required_human_approval:
+                logger.info(f"   ✅ Step does not require approval - proceeding")
+                return "no_approval_needed"
+            
+            # Step requires approval - check if approval requests already exist
+            existing_requests_result = await db.execute(
+                select(WorkflowApprovalRequest).where(
+                    WorkflowApprovalRequest.candidate_workflow_id == candidate_workflow_id,
+                    WorkflowApprovalRequest.workflow_step_detail_id == step_detail_id
+                )
+            )
+            existing_requests = existing_requests_result.scalars().all()
+            
+            if not existing_requests:
+                # No approval requests exist - create them
+                logger.info(f"   📝 Creating approval requests for step: {step_detail_id}")
+                return await self._create_approval_requests(db, step_detail, candidate_workflow_id, candidate, job)
+            else:
+                # Approval requests exist - check their status
+                logger.info(f"   🔍 Checking status of existing approval requests")
+                return await self._check_approval_status(db, existing_requests, step_detail.number_of_approvals_needed)
+                
+        except Exception as e:
+            logger.error(f"Error checking approval requirements: {e}")
+            return "no_approval_needed"  # Default to proceed if there's an error
+    
+    async def _create_approval_requests(self, db: AsyncSession, step_detail, candidate_workflow_id: str, candidate: Dict[str, Any], job: Dict[str, Any]) -> str:
+        """Create approval requests for all approvers of this step"""
+        try:
+            from models.approval import WorkflowApprovalRequest
+            
+            if not step_detail.approvers:
+                logger.warning(f"   ⚠️ Step requires approval but no approvers configured")
+                return "no_approval_needed"
+            
+            # Create approval request for each approver
+            approval_requests = []
+            for approver_id in step_detail.approvers:
+                approval_request = WorkflowApprovalRequest(
+                    candidate_workflow_id=candidate_workflow_id,
+                    workflow_step_detail_id=step_detail.id,
+                    approver_user_id=approver_id,
+                    required_approvals=step_detail.number_of_approvals_needed or len(step_detail.approvers)
+                )
+                approval_requests.append(approval_request)
+                db.add(approval_request)
+            
+            await db.commit()
+            
+            # Send email notifications to approvers
+            await self._send_approval_notifications(db, approval_requests, candidate, job, step_detail)
+            
+            logger.info(f"   ✅ Created {len(approval_requests)} approval requests")
+            return "awaiting_approval"
+            
+        except Exception as e:
+            logger.error(f"Error creating approval requests: {e}")
+            await db.rollback()
+            return "no_approval_needed"
+    
+    async def _check_approval_status(self, db: AsyncSession, approval_requests: list, required_approvals: int) -> str:
+        """Check the current status of approval requests"""
+        try:
+            from sqlalchemy import select
+            from models.approval import WorkflowApproval
+            
+            total_requests = len(approval_requests)
+            approved_count = 0
+            rejected_count = 0
+            
+            # Check each approval request for responses
+            for request in approval_requests:
+                approval_result = await db.execute(
+                    select(WorkflowApproval).where(
+                        WorkflowApproval.approval_request_id == request.id
+                    )
+                )
+                approval = approval_result.scalar_one_or_none()
+                
+                if approval:
+                    if approval.decision == 'approved':
+                        approved_count += 1
+                    elif approval.decision == 'rejected':
+                        rejected_count += 1
+            
+            pending_count = total_requests - approved_count - rejected_count
+            
+            logger.info(f"   📊 Approval Status: {approved_count} approved, {rejected_count} rejected, {pending_count} pending")
+            
+            # Check if any rejection (immediate rejection)
+            if rejected_count > 0:
+                return "rejected"
+            
+            # Check if enough approvals received
+            if approved_count >= (required_approvals or total_requests):
+                return "approved"
+            
+            # Still waiting for more approvals
+            return "awaiting_approval"
+            
+        except Exception as e:
+            logger.error(f"Error checking approval status: {e}")
+            return "awaiting_approval"
+    
+    async def _send_approval_notifications(self, db: AsyncSession, approval_requests: list, candidate: Dict[str, Any], job: Dict[str, Any], step_detail) -> None:
+        """Send email notifications to approvers"""
+        try:
+            # TODO: Implement email notification logic
+            # For now, we'll just log that notifications would be sent
+            logger.info(f"   📧 Would send approval notifications to {len(approval_requests)} approvers")
+            logger.info(f"   📋 For candidate: {candidate.get('first_name', '')} {candidate.get('last_name', '')}")
+            logger.info(f"   💼 For job: {job.get('title', '')}")
+            logger.info(f"   📝 Step: {step_detail.workflow_step_id}")
+            
+            # TODO: Send actual emails using email service
+            # This would typically include:
+            # - Email template with approval/reject links
+            # - Candidate information
+            # - Job details
+            # - Step description
+            
+        except Exception as e:
+            logger.error(f"Error sending approval notifications: {e}")
     
     def _extract_email_content(self, email: Dict[str, Any]) -> str:
         """Extract readable content from email for AI analysis"""
