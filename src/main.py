@@ -78,6 +78,12 @@ app.include_router(gmail.router, tags=["gmail"])
 app.include_router(workflows.router, tags=["workflows"])
 app.include_router(emails.router, tags=["emails"])
 app.include_router(approvals.router, tags=["approvals"])
+
+# Health check endpoint for Railway
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for monitoring"""
+    return {"status": "healthy", "service": "hr-automation-backend"}
 app.include_router(jobs.router, tags=["jobs"])
 
 # Health check endpoint
