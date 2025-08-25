@@ -354,13 +354,13 @@ class EmailPollingService:
             candidate_info = self._parse_candidate_info_from_email(from_email, email)
             logger.info(f"   👥 Candidate info: {candidate_info}")
             
-            # 4. Find existing job (jobs must be created beforehand by HR/recruiters)
-            job = await self._find_existing_job(db, job_title)
+            # 4. Find existing job by short ID from email subject (preferred) or title (fallback)
+            job = await self._find_existing_job(db, subject)
             if job:
-                logger.info(f"   🎯 Job found: {job['id']} - {job['title']}")
+                logger.info(f"   🎯 Job found: {job['id']} - {job['title']} (Short ID: {job['short_id']})")
             else:
-                logger.warning(f"   ⚠️ No existing job found for title: {job_title}")
-                logger.info(f"   💡 Make sure the job '{job_title}' exists in the system before candidates apply")
+                logger.warning(f"   ⚠️ No existing job found for subject: {subject}")
+                logger.info(f"   💡 Make sure the job has a valid short ID in brackets [JOBXXX] or exists with title '{job_title}'")
                 return
             
             # 5. Get company_id from the job
@@ -479,41 +479,75 @@ class EmailPollingService:
             }
         }
     
-    async def _find_existing_job(self, db: AsyncSession, job_title: str) -> Optional[Dict[str, Any]]:
-        """Find existing job by title (no job creation - jobs must exist first)"""
+    async def _find_existing_job(self, db: AsyncSession, email_subject: str) -> Optional[Dict[str, Any]]:
+        """Find existing job by extracting short ID from email subject (e.g., [JOB3VV])"""
         try:
             from sqlalchemy import select
             from models.job import Job
+            import re
             
-            # Find existing job by title (case-insensitive partial match)
-            # Try exact match first, then partial match
-            result = await db.execute(
-                select(Job).where(
-                    Job.title.ilike(f"%{job_title}%"),
-                    Job.status.in_(["active", "draft"])
-                ).limit(1)
-            )
-            existing_job = result.scalar_one_or_none()
+            # Extract job short ID from subject using regex pattern [JOBXXX]
+            job_id_pattern = r'\[([A-Z]{3}\w{3})\]'  # Matches [JOB123], [JOBXXX], etc.
+            match = re.search(job_id_pattern, email_subject)
             
-            if existing_job:
-                logger.info(f"   ✅ Found existing job: {existing_job.title} (ID: {existing_job.short_id})")
-                return {
-                    "id": existing_job.id,
-                    "title": existing_job.title,
-                    "short_id": existing_job.short_id,  # Include short_id for email subjects
-                    "status": existing_job.status,
-                    "workflow_template_id": existing_job.workflow_template_id,
-                    "department": getattr(existing_job, 'department', None)
-                }
-            else:
-                # Log available jobs for debugging
-                all_jobs_result = await db.execute(
-                    select(Job.title).where(Job.status.in_(["active", "draft"]))
+            if match:
+                job_short_id = match.group(1)  # Extract the ID (e.g., "JOB3VV")
+                logger.info(f"   🔍 Extracted job short ID from subject: {job_short_id}")
+                
+                # Find job by short_id (exact match)
+                result = await db.execute(
+                    select(Job).where(
+                        Job.short_id == job_short_id,
+                        Job.status.in_(["active", "draft"])
+                    ).limit(1)
                 )
-                available_jobs = [row[0] for row in all_jobs_result.fetchall()]
-                logger.warning(f"   ❌ No job found for title: '{job_title}'")
-                logger.info(f"   📋 Available jobs: {available_jobs}")
-                return None
+                existing_job = result.scalar_one_or_none()
+                
+                if existing_job:
+                    logger.info(f"   ✅ Found existing job: {existing_job.title} (ID: {existing_job.short_id})")
+                    return {
+                        "id": existing_job.id,
+                        "title": existing_job.title,
+                        "short_id": existing_job.short_id,
+                        "status": existing_job.status,
+                        "workflow_template_id": existing_job.workflow_template_id,
+                        "department": getattr(existing_job, 'department', None)
+                    }
+                else:
+                    logger.warning(f"   ❌ No job found with short ID: {job_short_id}")
+                    return None
+            else:
+                # Fallback: if no short ID found, try title-based matching (legacy support)
+                logger.info(f"   ⚠️ No job short ID found in subject, trying title-based matching...")
+                job_title = self._extract_job_title_from_subject(email_subject)
+                
+                result = await db.execute(
+                    select(Job).where(
+                        Job.title.ilike(f"%{job_title}%"),
+                        Job.status.in_(["active", "draft"])
+                    ).limit(1)
+                )
+                existing_job = result.scalar_one_or_none()
+                
+                if existing_job:
+                    logger.info(f"   ✅ Found job by title fallback: {existing_job.title} (ID: {existing_job.short_id})")
+                    return {
+                        "id": existing_job.id,
+                        "title": existing_job.title,
+                        "short_id": existing_job.short_id,
+                        "status": existing_job.status,
+                        "workflow_template_id": existing_job.workflow_template_id,
+                        "department": getattr(existing_job, 'department', None)
+                    }
+                else:
+                    # Log available jobs for debugging
+                    all_jobs_result = await db.execute(
+                        select(Job.title, Job.short_id).where(Job.status.in_(["active", "draft"]))
+                    )
+                    available_jobs = [(row[0], row[1]) for row in all_jobs_result.fetchall()]
+                    logger.warning(f"   ❌ No job found for subject: '{email_subject}'")
+                    logger.info(f"   📋 Available jobs: {available_jobs}")
+                    return None
             
         except Exception as e:
             logger.error(f"Error finding job: {e}")
