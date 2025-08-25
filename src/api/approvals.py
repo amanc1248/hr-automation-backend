@@ -143,10 +143,9 @@ async def submit_approval_response(
         
         db.add(approval_response)
         
-        # Update approval request status if needed
-        if approval_data.decision == 'rejected':
-            approval_request.status = 'rejected'
-            approval_request.completed_at = datetime.utcnow()
+        # Update approval request status to match the decision
+        approval_request.status = approval_data.decision  # 'approved' or 'rejected'
+        approval_request.completed_at = datetime.utcnow()
         
         await db.commit()
         
@@ -171,8 +170,16 @@ async def submit_approval_response(
 async def _check_and_continue_workflow(db: AsyncSession, approval_request: WorkflowApprovalRequest):
     """Check if workflow can continue and trigger continuation if ready"""
     try:
-        # Import here to avoid circular imports
+        from sqlalchemy import select
+        from models.approval import WorkflowApproval
+        from models.workflow import CandidateWorkflow, WorkflowStepDetail
+        from models.candidate import Candidate
+        from models.job import Job
         from services.email_polling_service import EmailPollingService
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        logger.info(f"🔍 Checking workflow continuation for approval request: {approval_request.id}")
         
         # Get all approval requests for this step
         all_requests_result = await db.execute(
@@ -183,22 +190,106 @@ async def _check_and_continue_workflow(db: AsyncSession, approval_request: Workf
         )
         all_requests = all_requests_result.scalars().all()
         
-        # Check approval status
-        email_service = EmailPollingService()
-        approval_status = await email_service._check_approval_status(
-            db, all_requests, approval_request.required_approvals
-        )
+        logger.info(f"   📊 Found {len(all_requests)} total approval requests for this step")
         
-        if approval_status in ['approved', 'rejected']:
-            # TODO: Trigger workflow continuation
-            # This would typically involve:
-            # 1. Getting the candidate workflow
-            # 2. Calling the workflow progression logic
-            # 3. Continuing from the current step
-            print(f"🔄 Workflow should continue with status: {approval_status}")
+        # Get all responses (approvals) for these requests
+        approval_responses_result = await db.execute(
+            select(WorkflowApproval).where(
+                WorkflowApproval.approval_request_id.in_([req.id for req in all_requests])
+            )
+        )
+        approval_responses = approval_responses_result.scalars().all()
+        
+        logger.info(f"   📝 Found {len(approval_responses)} responses from approvers")
+        
+        # Check if all approvers have responded
+        responded_request_ids = {resp.approval_request_id for resp in approval_responses}
+        all_request_ids = {req.id for req in all_requests}
+        
+        if responded_request_ids != all_request_ids:
+            logger.info(f"   ⏳ Not all approvers have responded yet")
+            logger.info(f"   📊 Responded: {len(responded_request_ids)}/{len(all_request_ids)}")
+            return  # Wait for more responses
+        
+        logger.info(f"   ✅ All approvers have responded!")
+        
+        # Check if all responses are approved
+        approved_responses = [resp for resp in approval_responses if resp.decision == 'approved']
+        rejected_responses = [resp for resp in approval_responses if resp.decision == 'rejected']
+        
+        logger.info(f"   📊 Approval breakdown: {len(approved_responses)} approved, {len(rejected_responses)} rejected")
+        
+        if len(rejected_responses) > 0:
+            logger.info(f"   ❌ Workflow step was rejected by {len(rejected_responses)} approver(s)")
+            logger.info(f"   ⏸️ No workflow continuation - manual intervention needed")
+            # TODO: In future, we can implement candidate rejection logic here
+            return
+        
+        if len(approved_responses) == len(all_requests):
+            logger.info(f"   🎉 All approvers approved! Continuing workflow...")
+            
+            # Get workflow, candidate, and job data for continuation
+            workflow_result = await db.execute(
+                select(CandidateWorkflow, Candidate, Job).join(
+                    Candidate, CandidateWorkflow.candidate_id == Candidate.id
+                ).join(
+                    Job, CandidateWorkflow.job_id == Job.id
+                ).where(
+                    CandidateWorkflow.id == approval_request.candidate_workflow_id
+                )
+            )
+            workflow_data = workflow_result.first()
+            
+            if not workflow_data:
+                logger.error(f"   ❌ Could not find workflow data for continuation")
+                return
+            
+            candidate_workflow, candidate, job = workflow_data
+            
+            # Convert to dictionaries for the email service
+            workflow_dict = {
+                'id': candidate_workflow.id,
+                'current_step_detail_id': candidate_workflow.current_step_detail_id,
+                'workflow_template_id': candidate_workflow.workflow_template_id,
+                'candidate_id': candidate_workflow.candidate_id,
+                'job_id': candidate_workflow.job_id
+            }
+            
+            candidate_dict = {
+                'id': candidate.id,
+                'first_name': candidate.first_name,
+                'last_name': candidate.last_name,
+                'email': candidate.email
+            }
+            
+            job_dict = {
+                'id': job.id,
+                'title': job.title,
+                'short_id': job.short_id
+            }
+            
+            # Create mock email data (since this is approval-triggered, not email-triggered)
+            email_dict = {
+                'snippet': f'Approval completed for {candidate.first_name} {candidate.last_name}',
+                'payload': {'headers': []}
+            }
+            
+            # Trigger workflow continuation
+            email_service = EmailPollingService()
+            logger.info(f"   🚀 Triggering workflow continuation...")
+            
+            await email_service._execute_workflow_progression(
+                db, workflow_dict, candidate_dict, job_dict, email_dict
+            )
+            
+            logger.info(f"   ✅ Workflow continuation completed!")
+        else:
+            logger.warning(f"   ⚠️ Unexpected approval state - not all approved but no rejections")
             
     except Exception as e:
-        print(f"Error checking workflow continuation: {e}")
+        logger.error(f"❌ Error checking workflow continuation: {e}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
 
 @router.get("/history", response_model=List[ApprovalRequestResponse])
 async def get_approval_history(

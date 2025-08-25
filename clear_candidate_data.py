@@ -32,9 +32,11 @@ load_dotenv()
 
 # Tables to clear - candidate-related data only
 CANDIDATE_TABLES = [
-    "applications",         # Candidate job applications
-    "candidate_workflow",   # Workflow instances for candidates
-    "candidates"           # Candidate records
+    "workflow_approvals",         # Individual approval decisions
+    "workflow_approval_requests", # Approval requests sent to approvers
+    "applications",               # Candidate job applications
+    "candidate_workflow",         # Workflow instances for candidates
+    "candidates"                  # Candidate records
 ]
 
 async def clear_candidate_data():
@@ -112,8 +114,8 @@ async def clear_candidate_data():
             total_deleted = 0
             
             # Clear tables in order (respecting foreign key dependencies)
-            # applications first (references candidates), then candidate_workflow, then candidates
-            ordered_tables = ["applications", "candidate_workflow", "candidates"]
+            # workflow_approvals first, then workflow_approval_requests, then applications, candidate_workflow, candidates
+            ordered_tables = ["workflow_approvals", "workflow_approval_requests", "applications", "candidate_workflow", "candidates"]
             
             for table_name in ordered_tables:
                 if table_name in CANDIDATE_TABLES and table_counts.get(table_name, 0) > 0:
