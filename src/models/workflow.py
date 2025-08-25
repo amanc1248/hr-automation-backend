@@ -47,6 +47,7 @@ class WorkflowStepDetail(BaseModel):
     
     # Relationships
     workflow_step = relationship("WorkflowStep", back_populates="step_details")
+    approval_requests = relationship("WorkflowApprovalRequest", back_populates="workflow_step_detail", cascade="all, delete-orphan")
 
 class CandidateWorkflow(BaseModel):
     """Candidate workflow model - tracks workflow instances for specific candidates"""
@@ -69,3 +70,4 @@ class CandidateWorkflow(BaseModel):
     workflow_template = relationship("WorkflowTemplate", back_populates="candidate_workflows")
     candidate = relationship("Candidate", back_populates="candidate_workflows")
     current_step_detail = relationship("WorkflowStepDetail", foreign_keys=[current_step_detail_id])
+    approval_requests = relationship("WorkflowApprovalRequest", back_populates="candidate_workflow", cascade="all, delete-orphan")

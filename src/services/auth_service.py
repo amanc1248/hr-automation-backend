@@ -201,36 +201,40 @@ class AuthService:
     
     async def authenticate_user(self, db: AsyncSession, email: str, password: str) -> Optional[Profile]:
         """Authenticate user with email and password"""
-        # First, get the profile
-        result = await db.execute(
-            select(Profile)
-            .options(
-                selectinload(Profile.company),
-                selectinload(Profile.role)
+        try:
+            # First, get the profile
+            result = await db.execute(
+                select(Profile)
+                .options(
+                    selectinload(Profile.company),
+                    selectinload(Profile.role)
+                )
+                .where(Profile.email == email, Profile.is_active == True)
             )
-            .where(Profile.email == email, Profile.is_active == True)
-        )
-        profile = result.scalar_one_or_none()
-        
-        if not profile:
+            profile = result.scalar_one_or_none()
+            
+            if not profile:
+                return None
+            
+            # Check if profile has password hash (new user system)
+            if profile.password_hash and self.verify_password(password, profile.password_hash):
+                return profile
+            
+            # Fall back to old User table for existing users
+            user_result = await db.execute(
+                select(User)
+                .where(User.profile_id == profile.id, User.is_active == True)
+            )
+            user = user_result.scalar_one_or_none()
+            
+            if user and user.password_hash and self.verify_password(password, user.password_hash):
+                return profile
+            
             return None
-        
-        # Check if profile has password hash (new user system)
-        if profile.password_hash and self.verify_password(password, profile.password_hash):
-            return profile
-        
-        # Fall back to old User table for existing users
-        user_result = await db.execute(
-            select(User)
-            .where(User.profile_id == profile.id, User.is_active == True)
-        )
-        user = user_result.scalar_one_or_none()
-        
-        if user and user.password_hash and self.verify_password(password, user.password_hash):
-            return profile
-        
-        return None
-    
+        except Exception as e:
+            import sys
+            print(f"❌ Error in authenticate_user: {e}", file=sys.stderr)
+            return None
     async def login_user(self, db: AsyncSession, login_data: UserLogin) -> AuthResponse:
         """Login user and return tokens"""
         profile = await self.authenticate_user(db, login_data.email, login_data.password)

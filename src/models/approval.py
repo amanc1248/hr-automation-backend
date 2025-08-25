@@ -43,7 +43,7 @@ class WorkflowApprovalRequest(Base):
     )
     approver_user_id = Column(
         UUID(as_uuid=True), 
-        ForeignKey("users.id", ondelete="CASCADE"), 
+        ForeignKey("profiles.id", ondelete="CASCADE"), 
         nullable=False
     )
     
@@ -62,7 +62,7 @@ class WorkflowApprovalRequest(Base):
     # Relationships
     candidate_workflow = relationship("CandidateWorkflow", back_populates="approval_requests")
     workflow_step_detail = relationship("WorkflowStepDetail", back_populates="approval_requests")
-    approver = relationship("User", foreign_keys=[approver_user_id])
+    approver = relationship("Profile", foreign_keys=[approver_user_id])
     approvals = relationship("WorkflowApproval", back_populates="approval_request", cascade="all, delete-orphan")
     
     # Constraints
@@ -109,26 +109,5 @@ class WorkflowApproval(Base):
         return f"<WorkflowApproval(id={self.id}, decision={self.decision}, request={self.approval_request_id})>"
 
 
-# Add relationship to existing models
-def add_approval_relationships():
-    """
-    Add approval relationships to existing models.
-    This should be called after all models are defined.
-    """
-    from models.workflow import CandidateWorkflow, WorkflowStepDetail
-    from models.user import User
-    
-    # Add relationships to CandidateWorkflow
-    if not hasattr(CandidateWorkflow, 'approval_requests'):
-        CandidateWorkflow.approval_requests = relationship(
-            "WorkflowApprovalRequest", 
-            back_populates="candidate_workflow",
-            cascade="all, delete-orphan"
-        )
-    
-    # Add relationships to WorkflowStepDetail  
-    if not hasattr(WorkflowStepDetail, 'approval_requests'):
-        WorkflowStepDetail.approval_requests = relationship(
-            "WorkflowApprovalRequest", 
-            back_populates="workflow_step_detail"
-        )
+# Relationships are now defined statically in the workflow models
+# No need for dynamic configuration

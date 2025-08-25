@@ -72,6 +72,7 @@ class Profile(BaseModel):
     role = relationship("UserRole", back_populates="profiles")
     created_jobs = relationship("Job", foreign_keys="Job.created_by", back_populates="creator")
     assigned_jobs = relationship("Job", foreign_keys="Job.assigned_to", back_populates="assignee")
+    approval_requests = relationship("WorkflowApprovalRequest", foreign_keys="WorkflowApprovalRequest.approver_user_id", back_populates="approver")
 
 class User(BaseModel):
     """User model for authentication (if not using Supabase auth)"""
