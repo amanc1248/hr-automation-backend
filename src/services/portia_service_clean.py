@@ -6,7 +6,7 @@ Handles workflow step execution using Portia AI
 import logging
 import json
 from typing import Dict, Any, Optional
-from portia import Portia, Config, InMemoryToolRegistry, DefaultToolRegistry, StorageClass, LogLevel
+from portia import Portia, Config, InMemoryToolRegistry, StorageClass, LogLevel
 from tools.resume_screening_tool import ResumeScreeningTool
 from tools.send_task_assignment_tool import SendTaskAssignmentTool
 from tools.schedule_interview_tool import ScheduleInterviewTool
@@ -32,7 +32,7 @@ class PortiaService:
                 default_log_level=LogLevel.INFO
             )
             
-            # Create our custom HR tools
+            # Create tool registry with our custom HR tools
             custom_tools = [
                 ResumeScreeningTool(),
                 SendTaskAssignmentTool(),
@@ -41,19 +41,17 @@ class PortiaService:
                 ReviewTechnicalAssignmentTool()
             ]
             
-            # Combine DefaultToolRegistry (includes Gmail tools) with our custom tools
-            default_registry = DefaultToolRegistry(config)
-            tool_registry = default_registry + custom_tools
+            # Use InMemoryToolRegistry with custom tools
+            tool_registry = InMemoryToolRegistry(tools=custom_tools)
             
-            # Initialize Portia with config and combined tools
+            # Initialize Portia with config and tools
             self.portia = Portia(
                 config=config,
                 tools=tool_registry
             )
             
-            logger.info("✅ Portia initialized successfully with DefaultToolRegistry + custom HR tools")
-            logger.info(f"🔧 Custom tools: {[tool.id for tool in custom_tools]}")
-            logger.info("📧 Gmail and other default tools are also available")
+            logger.info("✅ Portia initialized successfully with custom HR tools")
+            logger.info(f"🔧 Available tools: {[tool.id for tool in custom_tools]}")
             
         except Exception as e:
             logger.error(f"❌ Failed to initialize Portia: {e}")
@@ -99,12 +97,12 @@ class PortiaService:
                 else:
                     email_content = f"Subject: {subject}\nFrom: {sender}\nDate: {date}\n\nSnippet: {email.get('snippet', '')}"
             
-            # Create a task for Portia with all context embedded in the task string
+            # Create a task for Portia based on the step description and available tools
             task = self._create_portia_task(step_description, candidate, job, email, step, email_content)
             
             logger.info(f"🤖 Executing Portia task: {task[:100]}...")
             
-            # Execute the task - Portia.run() only accepts the task string
+            # Execute the task
             plan_run = self.portia.run(task)
             
             # Parse result
@@ -131,33 +129,15 @@ class PortiaService:
             }
     
     def _create_portia_task(self, step_description: str, candidate: Dict[str, Any], job: Dict[str, Any], email: Dict[str, Any], step: Dict[str, Any], email_content: str) -> str:
-        """Create a Portia task with all context embedded directly in the task string"""
+        """Create a Portia task using the step description directly with candidate/job context"""
         
-        # Extract actual values to embed in the task
         candidate_name = f"{candidate.get('first_name', '')} {candidate.get('last_name', '')}".strip()
         candidate_email = candidate.get('email', '')
         job_title = job.get('title', 'Unknown Position')
         job_short_id = job.get('short_id', 'JOBXXX')
         
-        # Create task with all actual values embedded
-        task = f"""
-        {step_description}
-        
-        CANDIDATE INFORMATION:
-        - Name: {candidate_name}
-        - Email: {candidate_email}
-        - Job Applied For: {job_title}
-        - Job Short ID: {job_short_id}
-        
-        JOB REQUIREMENTS:
-        • 3+ years full-stack development experience
-        • Frontend: React, TypeScript, modern CSS
-        • Backend: Node.js or Python, RESTful APIs
-        • Database: PostgreSQL or similar SQL database
-        • Version control: Git
-        • Problem-solving and communication skills
-        
-        RESUME CONTENT (for screening steps):
+        # Mock resume content for screening steps
+        resume_content = f"""
         {candidate_name}
         Full Stack Developer
         Email: {candidate_email}
@@ -176,16 +156,45 @@ class PortiaService:
         • Backend: Node.js, Python, FastAPI
         • Database: PostgreSQL, MongoDB
         • Cloud: AWS, Docker
+        """
+        
+        # Job requirements for context
+        job_requirements = f"""
+        REQUIRED SKILLS for {job_title}:
+        • 3+ years full-stack development experience
+        • Frontend: React, TypeScript, modern CSS
+        • Backend: Node.js or Python, RESTful APIs
+        • Database: PostgreSQL or similar SQL database
+        • Version control: Git
+        • Problem-solving and communication skills
+        """
+        
+        # Use the step description directly as the main instruction
+        # and append candidate/job context
+        task = f"""
+        {step_description}
+        
+        CANDIDATE INFORMATION:
+        - Name: {candidate_name}
+        - Email: {candidate_email}
+        - Job Applied For: {job_title}
+        - Job Short ID: {job_short_id}
+        
+        JOB REQUIREMENTS:
+        {job_requirements}
+        
+        RESUME CONTENT (for screening steps):
+        {resume_content}
         
         EMAIL CONTENT (for review steps):
         {email_content}
         
-        EMAIL SUBJECT FORMAT EXAMPLES:
+        EMAIL SUBJECT FORMAT:
         - Technical Assessments: [{job_short_id}] Technical Assessment - {job_title} Position
         - Interview Invitations: [{job_short_id}] Interview Invitation - {job_title} Position  
         - Offer Letters: [{job_short_id}] Job Offer - {job_title} Position (Action Required)
         
-        Execute the workflow step according to the description above using the appropriate tool.
+        Execute the workflow step according to the description above.
         """
         
         return task.strip()
