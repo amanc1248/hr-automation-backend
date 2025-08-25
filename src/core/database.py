@@ -11,7 +11,7 @@ print(f"Database URL: {settings.async_database_url[:50]}...")
 # Create async engine for Railway PostgreSQL
 engine = create_async_engine(
     settings.async_database_url,  # Use async version
-    echo=settings.DEBUG,  # Show SQL queries in debug mode
+    echo=False,  # Disable SQL query logging for performance
     pool_size=5,
     max_overflow=10,
     pool_pre_ping=True,  # Verify connections before use

@@ -14,6 +14,10 @@ from api import auth, users, gmail, workflows, emails, approvals, jobs
 
 # Configure logging
 logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL))
+
+# Disable SQLAlchemy engine logging for performance
+logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
