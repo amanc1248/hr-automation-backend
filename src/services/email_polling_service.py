@@ -496,10 +496,11 @@ class EmailPollingService:
             existing_job = result.scalar_one_or_none()
             
             if existing_job:
-                logger.info(f"   ✅ Found existing job: {existing_job.title}")
+                logger.info(f"   ✅ Found existing job: {existing_job.title} (ID: {existing_job.short_id})")
                 return {
                     "id": existing_job.id,
                     "title": existing_job.title,
+                    "short_id": existing_job.short_id,  # Include short_id for email subjects
                     "status": existing_job.status,
                     "workflow_template_id": existing_job.workflow_template_id,
                     "department": getattr(existing_job, 'department', None)

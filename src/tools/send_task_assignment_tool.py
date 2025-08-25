@@ -17,6 +17,7 @@ class SendTaskAssignmentInput(BaseModel):
     candidate_email: str = Field(description="Candidate's email address")
     candidate_name: str = Field(description="Candidate's full name")
     job_title: str = Field(description="Job title they're applying for")
+    job_short_id: str = Field(description="Job short ID for email subject (e.g., 'JOB123')")
     job_requirements: str = Field(description="Detailed job requirements for the role")
     seniority_level: str = Field(description="Seniority level of the job (e.g., 'Junior', 'Mid', 'Senior')")
 
@@ -36,7 +37,7 @@ class SendTaskAssignmentTool(Tool[str]):
         "JSON object with 'success' (bool), 'status' ('approved'), 'email_sent' (bool), 'data' (assessment details)"
     )
 
-    def run(self, context: ToolRunContext, candidate_email: str, candidate_name: str, job_title: str, job_requirements: str, seniority_level: str) -> str:
+    def run(self, context: ToolRunContext, candidate_email: str, candidate_name: str, job_title: str, job_short_id: str, job_requirements: str, seniority_level: str) -> str:
         """Generate a technical assessment for the candidate"""
         try:
             logger.info(f"📝 Generating technical assessment for {candidate_email}")

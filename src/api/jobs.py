@@ -18,6 +18,7 @@ from schemas.job import (
 )
 from api.auth import get_current_user
 from models.user import Profile
+from utils.short_id import generate_unique_job_short_id
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -64,6 +65,7 @@ async def get_jobs(
                 JobResponse(
                     id=job.id,
                     title=job.title,
+                    short_id=job.short_id,
                     description=job.description,
                     requirements=job.requirements,
                     department=job.department,
@@ -120,6 +122,7 @@ async def get_job(
         return JobResponse(
             id=job.id,
             title=job.title,
+            short_id=job.short_id,
             description=job.description,
             requirements=job.requirements,
             department=job.department,
@@ -169,9 +172,13 @@ async def create_job(
                     detail="Invalid workflow template ID"
                 )
         
+        # Generate unique short ID for the job
+        short_id = await generate_unique_job_short_id(db)
+        
         # Create new job
         new_job = Job(
             title=job_data.title,
+            short_id=short_id,
             description=job_data.description,
             requirements=job_data.requirements,
             department=job_data.department,
@@ -199,6 +206,7 @@ async def create_job(
         return JobResponse(
             id=new_job.id,
             title=new_job.title,
+            short_id=new_job.short_id,
             description=new_job.description,
             requirements=new_job.requirements,
             department=new_job.department,
@@ -276,6 +284,7 @@ async def update_job(
         return JobResponse(
             id=job.id,
             title=job.title,
+            short_id=job.short_id,
             description=job.description,
             requirements=job.requirements,
             department=job.department,

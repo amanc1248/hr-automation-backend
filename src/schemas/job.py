@@ -53,6 +53,7 @@ class JobUpdate(BaseModel):
 class JobResponse(JobBase):
     """Response schema for jobs"""
     id: UUID
+    short_id: str = Field(..., description="Short unique identifier for emails")
     status: str
     created_at: datetime
     updated_at: datetime

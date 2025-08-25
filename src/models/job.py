@@ -8,6 +8,7 @@ class Job(BaseModel):
     __tablename__ = "jobs"
     
     title = Column(String(255), nullable=False)
+    short_id = Column(String(8), unique=True, nullable=False)  # Short unique identifier for emails
     description = Column(Text, nullable=False)
     requirements = Column(Text, nullable=True)
     requirements_structured = Column(JSONB, default=dict, nullable=False)

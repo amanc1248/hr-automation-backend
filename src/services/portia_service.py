@@ -133,6 +133,7 @@ class PortiaService:
         candidate_name = f"{candidate.get('first_name', '')} {candidate.get('last_name', '')}".strip()
         candidate_email = candidate.get('email', '')
         job_title = job.get('title', 'Unknown Position')
+        job_short_id = job.get('short_id', 'JOBXXX')  # Get job short ID
         step_name = step.get('name', '').lower()
         
         # Mock resume content for testing
@@ -204,7 +205,7 @@ class PortiaService:
             
             Instructions:
             1. First, use the send_task_assignment_tool to create an appropriate technical assessment for this candidate
-            2. Then, send an email to {candidate_email} with the subject "Technical Assessment - {job_title} Position"
+            2. Then, send an email to {candidate_email} with the subject "[{job_short_id}] Technical Assessment - {job_title} Position"
             3. Include the generated assessment details in the email body
             4. Make sure the email is professional and includes clear submission guidelines and timeline
             
@@ -212,7 +213,7 @@ class PortiaService:
             """
         elif "interview" in step_name or "schedule" in step_name:
             task = f"""
-            Use the schedule_interview_tool to schedule an interview with the candidate.
+            Use the schedule_interview_tool to schedule an interview with the candidate, then send an interview invitation email.
             
             Candidate Details:
             - Name: {candidate_name}
@@ -221,7 +222,13 @@ class PortiaService:
             
             Step Description: {step_description}
             
-            Please use the schedule_interview_tool to arrange an appropriate interview for this candidate.
+            Instructions:
+            1. First, use the schedule_interview_tool to arrange an appropriate interview for this candidate
+            2. Then, send an email to {candidate_email} with the subject "[{job_short_id}] Interview Invitation - {job_title} Position"
+            3. Include interview details, date/time, meeting link, and preparation instructions
+            4. Make the email professional and encouraging
+            
+            The email should contain complete interview logistics and what to expect.
             """
         elif "offer" in step_name or "letter" in step_name:
             task = f"""
@@ -236,7 +243,7 @@ class PortiaService:
             
             Instructions:
             1. First, use the send_offer_letter_tool to create a comprehensive job offer for this successful candidate
-            2. Then, send an email to {candidate_email} with the subject "Job Offer - {job_title} Position (Action Required)"
+            2. Then, send an email to {candidate_email} with the subject "[{job_short_id}] Job Offer - {job_title} Position (Action Required)"
             3. Include the complete offer details in the email body with salary, benefits, start date, and next steps
             4. Make sure the email is professional, celebratory, and includes all necessary offer information
             
