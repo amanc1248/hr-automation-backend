@@ -865,6 +865,9 @@ class EmailPollingService:
                 # Update execution log
                 await self._update_workflow_execution_log(db, current_workflow['id'], step_result, current_step_detail_id)
                 
+                # Update WorkflowStepDetail status based on step result
+                await self._update_step_detail_status(db, current_step_detail_id, step_status)
+                
                 # Mark email as read after successful step execution
                 if step_result.get('success', False):
                     await self._mark_email_as_read(email)
@@ -1643,10 +1646,18 @@ class EmailPollingService:
     async def _mark_workflow_completed(self, db: AsyncSession, workflow_id: str):
         """Mark workflow as completed"""
         try:
-            from sqlalchemy import update
+            from sqlalchemy import select, update
             from models.workflow import CandidateWorkflow
             from datetime import datetime
             
+            # Get current step detail ID to update its status
+            current_step_detail_id = None
+            result_step = await db.execute(
+                select(CandidateWorkflow.current_step_detail_id).where(CandidateWorkflow.id == workflow_id)
+            )
+            current_step_detail_id = result_step.scalar_one_or_none()
+            
+            # Update the workflow
             update_query = update(CandidateWorkflow).where(
                 CandidateWorkflow.id == workflow_id
             ).values(
@@ -1656,6 +1667,11 @@ class EmailPollingService:
             )
             
             await db.execute(update_query)
+            
+            # Update the current step detail status to finished
+            if current_step_detail_id:
+                await self._update_step_detail_status(db, str(current_step_detail_id), 'finished')
+            
             await db.commit()
             
             logger.info(f"   🎉 Marked workflow as completed: {workflow_id}")
@@ -1687,6 +1703,14 @@ class EmailPollingService:
             
             current_log.append(rejection_entry)
             
+            # Get current step detail ID to update its status
+            current_step_detail_id = None
+            result_step = await db.execute(
+                select(CandidateWorkflow.current_step_detail_id).where(CandidateWorkflow.id == workflow_id)
+            )
+            current_step_detail_id = result_step.scalar_one_or_none()
+            
+            # Update the workflow
             update_query = update(CandidateWorkflow).where(
                 CandidateWorkflow.id == workflow_id
             ).values(
@@ -1697,6 +1721,11 @@ class EmailPollingService:
             )
             
             await db.execute(update_query)
+            
+            # Update the current step detail status to rejected
+            if current_step_detail_id:
+                await self._update_step_detail_status(db, str(current_step_detail_id), 'rejected')
+            
             await db.commit()
             
             logger.info(f"   ❌ Marked workflow as rejected: {workflow_id}")
@@ -1704,6 +1733,43 @@ class EmailPollingService:
             
         except Exception as e:
             logger.error(f"Error marking workflow as rejected: {e}")
+            await db.rollback()
+    
+    async def _update_step_detail_status(self, db: AsyncSession, step_detail_id: str, step_status: str):
+        """Update WorkflowStepDetail status based on step execution result"""
+        try:
+            from sqlalchemy import update
+            from models.workflow import WorkflowStepDetail
+            from datetime import datetime
+            
+            # Map step status to WorkflowStepDetail status
+            status_mapping = {
+                'approved': 'finished',  # Step completed successfully
+                'rejected': 'rejected',  # Step was rejected
+                'pending': 'awaiting',   # Step is waiting
+                'completed': 'finished', # Step completed
+                'success': 'finished',   # Step succeeded
+                'failed': 'rejected'     # Step failed
+            }
+            
+            # Get the mapped status, default to 'awaiting' if unknown
+            mapped_status = status_mapping.get(step_status, 'awaiting')
+            
+            # Update the WorkflowStepDetail status
+            update_query = update(WorkflowStepDetail).where(
+                WorkflowStepDetail.id == step_detail_id
+            ).values(
+                status=mapped_status,
+                updated_at=datetime.utcnow()
+            )
+            
+            await db.execute(update_query)
+            await db.commit()
+            
+            logger.info(f"   📝 Updated WorkflowStepDetail {step_detail_id} status to: {mapped_status}")
+            
+        except Exception as e:
+            logger.error(f"Error updating WorkflowStepDetail status: {e}")
             await db.rollback()
             
     async def _update_tokens_in_db(self, config_id: str, new_tokens: Dict[str, Any]):
