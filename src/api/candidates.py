@@ -4,6 +4,7 @@ from sqlalchemy import select, and_, func, desc
 from sqlalchemy.orm import selectinload
 from typing import Optional, List
 import uuid
+from datetime import datetime
 
 from core.database import get_db
 from api.auth import get_current_user
@@ -37,7 +38,7 @@ async def get_candidates(
         # Base query with joins to get candidate data along with related info
         query = select(Candidate).options(
             selectinload(Candidate.applications).selectinload(Application.job),
-            selectinload(Candidate.candidate_workflows).selectinload(CandidateWorkflow.workflow_step_details)
+            selectinload(Candidate.candidate_workflows)
         ).where(
             Candidate.company_id == current_user.company_id,
             Candidate.deleted_at.is_(None)
@@ -111,7 +112,11 @@ async def get_candidates(
                     current_step_result = await db.execute(current_step_query)
                     current_step_detail = current_step_result.scalar_one_or_none()
                     if current_step_detail:
-                        current_step = current_step_detail.step_name or "Unknown step"
+                        # Get the workflow step name through the relationship
+                        if current_step_detail.workflow_step:
+                            current_step = current_step_detail.workflow_step.name or "Unknown step"
+                        else:
+                            current_step = "Unknown step"
                 
                 # Determine status based on workflow state
                 if latest_workflow.steps_executed > 0:
@@ -296,3 +301,115 @@ async def create_candidate(
         await db.rollback()
         print(f"Error creating candidate: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to create candidate: {str(e)}")
+
+@router.put("/{candidate_id}", response_model=CandidateResponse)
+async def update_candidate(
+    candidate_id: str,
+    candidate_data: CandidateUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: Profile = Depends(get_current_user)
+):
+    """Update an existing candidate"""
+    try:
+        # Get existing candidate
+        query = select(Candidate).where(
+            Candidate.id == uuid.UUID(candidate_id),
+            Candidate.company_id == current_user.company_id,
+            Candidate.deleted_at.is_(None)
+        )
+        result = await db.execute(query)
+        candidate = result.scalar_one_or_none()
+        
+        if not candidate:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+        
+        # Check if email is being changed and if it conflicts with another candidate
+        if candidate_data.email != candidate.email:
+            existing_query = select(Candidate).where(
+                Candidate.email == candidate_data.email,
+                Candidate.company_id == current_user.company_id,
+                Candidate.id != candidate.id,
+                Candidate.deleted_at.is_(None)
+            )
+            existing_result = await db.execute(existing_query)
+            if existing_result.scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="Another candidate with this email already exists")
+        
+        # Update candidate fields
+        candidate.first_name = candidate_data.first_name
+        candidate.last_name = candidate_data.last_name
+        candidate.email = candidate_data.email
+        candidate.phone = candidate_data.phone
+        candidate.location = candidate_data.location
+        
+        await db.commit()
+        await db.refresh(candidate)
+        
+        # Return updated candidate
+        return CandidateResponse(
+            id=str(candidate.id),
+            name=f"{candidate.first_name} {candidate.last_name}",
+            email=candidate.email,
+            phone=candidate.phone,
+            location=candidate.location,
+            jobId="",  # Will be populated when applications exist
+            jobTitle="",
+            applicationDate=candidate.created_at.isoformat(),
+            currentStep="updated",
+            workflowProgress=[],
+            resume={
+                "id": str(candidate.id),
+                "filename": "",
+                "originalName": "",
+                "fileSize": 0,
+                "fileType": "",
+                "downloadUrl": candidate.resume_url or "",
+                "uploadedAt": candidate.created_at.isoformat()
+            },
+            communicationHistory=[],
+            status="active",
+            notes=[],
+            companyId=str(candidate.company_id),
+            createdAt=candidate.created_at.isoformat(),
+            updatedAt=candidate.updated_at.isoformat()
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        print(f"Error updating candidate: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update candidate: {str(e)}")
+
+@router.delete("/{candidate_id}", status_code=204)
+async def delete_candidate(
+    candidate_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: Profile = Depends(get_current_user)
+):
+    """Soft delete a candidate"""
+    try:
+        # Get existing candidate
+        query = select(Candidate).where(
+            Candidate.id == uuid.UUID(candidate_id),
+            Candidate.company_id == current_user.company_id,
+            Candidate.deleted_at.is_(None)
+        )
+        result = await db.execute(query)
+        candidate = result.scalar_one_or_none()
+        
+        if not candidate:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+        
+        # Soft delete by setting deleted_at timestamp
+        candidate.deleted_at = datetime.utcnow()
+        await db.commit()
+        
+        return None
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        print(f"Error deleting candidate: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete candidate: {str(e)}")
