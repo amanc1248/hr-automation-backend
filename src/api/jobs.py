@@ -22,6 +22,7 @@ from utils.short_id import generate_unique_job_short_id
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
+@router.get("", response_model=JobListResponse)
 @router.get("/", response_model=JobListResponse)
 async def get_jobs(
     db: AsyncSession = Depends(get_db),
@@ -150,6 +151,7 @@ async def get_job(
             detail=f"Failed to fetch job: {str(e)}"
         )
 
+@router.post("", response_model=JobResponse)
 @router.post("/", response_model=JobResponse)
 async def create_job(
     job_data: JobCreate,

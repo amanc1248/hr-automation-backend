@@ -21,6 +21,7 @@ from schemas.candidate import (
 
 router = APIRouter(prefix="/api/candidates")
 
+@router.get("", response_model=CandidatesListResponse)
 @router.get("/", response_model=CandidatesListResponse)
 async def get_candidates(
     db: AsyncSession = Depends(get_db),
@@ -216,6 +217,7 @@ async def get_candidate(
         print(f"Error getting candidate: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch candidate: {str(e)}")
 
+@router.post("", response_model=CandidateResponse)
 @router.post("/", response_model=CandidateResponse)
 async def create_candidate(
     candidate_data: CandidateCreateRequest,
