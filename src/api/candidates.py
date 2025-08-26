@@ -466,22 +466,28 @@ async def get_candidate_workflow(
                 workflow_template = template_result.scalar_one_or_none()
                 
                 if workflow_template and workflow_template.steps_execution_id:
-                    # Ensure steps_execution_id is a list
-                    step_ids = workflow_template.steps_execution_id
-                    if not isinstance(step_ids, list):
-                        # If it's not a list, try to convert it
-                        step_ids = [step_ids] if step_ids else []
+                    # steps_execution_id contains WorkflowStepDetail IDs, not WorkflowStep IDs
+                    step_detail_ids = workflow_template.steps_execution_id
+                    if not isinstance(step_detail_ids, list):
+                        step_detail_ids = [step_detail_ids] if step_detail_ids else []
                     
-                    if step_ids:
+                    # Debug logging
+                    print(f"🔍 Debug: Workflow template {workflow_template.id}")
+                    print(f"🔍 Debug: steps_execution_id = {step_detail_ids}")
+                    print(f"🔍 Debug: step_detail_ids type = {type(step_detail_ids)}")
+                    
+                    if step_detail_ids:
                         # Get all workflow step details for this template, ordered by order_number
                         step_details_query = select(WorkflowStepDetail).options(
                             selectinload(WorkflowStepDetail.workflow_step)
                         ).where(
-                            WorkflowStepDetail.workflow_step_id.in_(step_ids)
+                            WorkflowStepDetail.id.in_(step_detail_ids)
                         ).order_by(WorkflowStepDetail.order_number)
                         
+                        print(f"🔍 Debug: Step details query = {step_details_query}")
                         step_details_result = await db.execute(step_details_query)
                         step_details = step_details_result.scalars().all()
+                        print(f"🔍 Debug: Found {len(step_details)} step details")
                         
                         if step_details:
                             total_steps = len(step_details)
@@ -494,6 +500,8 @@ async def get_candidate_workflow(
                             # Create steps array with real step names and statuses
                             workflow_info["steps"] = []
                             for i, step_detail in enumerate(step_details):
+                                print(f"🔍 Debug: Step detail {i}: id={step_detail.id}, workflow_step_id={step_detail.workflow_step_id}, name={step_detail.workflow_step.name if step_detail.workflow_step else 'None'}, status={step_detail.status}")
+                                
                                 step_info = {
                                     "step": i + 1,
                                     "name": step_detail.workflow_step.name if step_detail.workflow_step else f"Step {i + 1}",
@@ -505,9 +513,10 @@ async def get_candidate_workflow(
                                 }
                                 workflow_info["steps"].append(step_info)
                         else:
-                            # Fallback: Get workflow steps directly if no step details exist
+                            # If no step details found, try to get workflow steps directly
+                            # This might happen if steps_execution_id contains WorkflowStep IDs instead
                             workflow_steps_query = select(WorkflowStep).where(
-                                WorkflowStep.id.in_(step_ids)
+                                WorkflowStep.id.in_(step_detail_ids)
                             ).order_by(WorkflowStep.id)
                             
                             workflow_steps_result = await db.execute(workflow_steps_query)
