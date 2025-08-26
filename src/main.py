@@ -2,7 +2,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
-import os
 
 # Import our modules
 import sys
@@ -72,31 +71,11 @@ app.add_middleware(
         "https://hiring-automation-frontend.vercel.app",  # Vercel production
         "https://hiring-automation-frontend-3ly6vhsk0-amanc1248s-projects.vercel.app",  # Vercel deployment URL
         "https://*.vercel.app",  # All Vercel preview deployments
-        "https://hiring-automation-frontend.vercel.app",  # Main Vercel domain
-        "https://hiring-automation-frontend-git-main-amanc124s-projects.vercel.app",  # Git main branch
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Force HTTPS in production
-if os.getenv("FORCE_HTTPS", "false").lower() == "true":
-    from fastapi.middleware.trustedhost import TrustedHostMiddleware
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
-    
-    # Add HTTPS redirect middleware
-    from fastapi import Request
-    from fastapi.responses import RedirectResponse
-    
-    @app.middleware("http")
-    async def https_redirect(request: Request, call_next):
-        if request.url.scheme == "http":
-            # Redirect HTTP to HTTPS
-            url = str(request.url)
-            url = url.replace("http://", "https://", 1)
-            return RedirectResponse(url, status_code=301)
-        return await call_next(request)
 
 # Include API routers
 app.include_router(auth.router, prefix="/api", tags=["authentication"])
@@ -112,17 +91,6 @@ app.include_router(candidates.router, tags=["candidates"])
 async def health_check():
     """Health check endpoint for monitoring"""
     return {"status": "healthy", "service": "hr-automation-backend"}
-
-# HTTPS test endpoint
-@app.get("/https-test")
-async def https_test():
-    """Test endpoint to verify HTTPS configuration"""
-    return {
-        "message": "HTTPS is working!",
-        "scheme": "https",
-        "force_https": os.getenv("FORCE_HTTPS", "false"),
-        "timestamp": "2025-08-26T16:17:47Z"
-    }
 app.include_router(jobs.router, tags=["jobs"])
 
 # Health check endpoint
