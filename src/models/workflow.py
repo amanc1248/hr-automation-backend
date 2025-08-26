@@ -63,6 +63,8 @@ class CandidateWorkflow(BaseModel):
     started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at = Column(DateTime, nullable=True)
     execution_log = Column(JSONB, default=list, nullable=False)
+    steps_executed = Column(Integer, default=0, nullable=False)  # Track number of steps executed
+    workflow_completed = Column(Boolean, default=False, nullable=False)  # Track if workflow is completed
     is_deleted = Column(Boolean, default=False, nullable=False)
     
     # Relationships
@@ -71,3 +73,13 @@ class CandidateWorkflow(BaseModel):
     candidate = relationship("Candidate", back_populates="candidate_workflows")
     current_step_detail = relationship("WorkflowStepDetail", foreign_keys=[current_step_detail_id])
     approval_requests = relationship("WorkflowApprovalRequest", back_populates="candidate_workflow", cascade="all, delete-orphan")
+    
+    # Add relationship to get workflow step details through the template
+    @property
+    def workflow_step_details(self):
+        """Get workflow step details through the template"""
+        if self.workflow_template and self.workflow_template.steps_execution_id:
+            # This would need to be implemented with proper querying
+            # For now, return empty list to avoid errors
+            return []
+        return []
