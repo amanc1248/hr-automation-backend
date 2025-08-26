@@ -491,14 +491,11 @@ async def get_candidate_workflow(
                         
                         if step_details:
                             total_steps = len(step_details)
-                            completed_steps = latest_workflow.steps_executed
-                            
-                            workflow_info["progress"]["total"] = total_steps
-                            workflow_info["progress"]["completed"] = completed_steps
-                            workflow_info["progress"]["percentage"] = int((completed_steps / total_steps) * 100) if total_steps > 0 else 0
                             
                             # Create steps array with real step names and statuses
                             workflow_info["steps"] = []
+                            completed_steps = 0
+                            
                             for i, step_detail in enumerate(step_details):
                                 print(f"🔍 Debug: Step detail {i}: id={step_detail.id}, workflow_step_id={step_detail.workflow_step_id}, name={step_detail.workflow_step.name if step_detail.workflow_step else 'None'}, status={step_detail.status}")
                                 
@@ -511,7 +508,17 @@ async def get_candidate_workflow(
                                     "requires_approval": step_detail.required_human_approval,
                                     "approvers": step_detail.approvers
                                 }
+                                
+                                # Count completed steps
+                                if step_detail.status == "finished":
+                                    completed_steps += 1
+                                
                                 workflow_info["steps"].append(step_info)
+                            
+                            # Calculate progress based on actual completed steps
+                            workflow_info["progress"]["total"] = total_steps
+                            workflow_info["progress"]["completed"] = completed_steps
+                            workflow_info["progress"]["percentage"] = int((completed_steps / total_steps) * 100) if total_steps > 0 else 0
                         else:
                             # If no step details found, try to get workflow steps directly
                             # This might happen if steps_execution_id contains WorkflowStep IDs instead
@@ -524,14 +531,11 @@ async def get_candidate_workflow(
                             
                             if workflow_steps:
                                 total_steps = len(workflow_steps)
-                                completed_steps = latest_workflow.steps_executed
-                                
-                                workflow_info["progress"]["total"] = total_steps
-                                workflow_info["progress"]["completed"] = completed_steps
-                                workflow_info["progress"]["percentage"] = int((completed_steps / total_steps) * 100) if total_steps > 0 else 0
                                 
                                 # Create steps array with workflow step names
                                 workflow_info["steps"] = []
+                                completed_steps = 0
+                                
                                 for i, workflow_step in enumerate(workflow_steps):
                                     step_info = {
                                         "step": i + 1,
@@ -543,6 +547,11 @@ async def get_candidate_workflow(
                                         "approvers": []
                                     }
                                     workflow_info["steps"].append(step_info)
+                                
+                                # Calculate progress based on actual completed steps
+                                workflow_info["progress"]["total"] = total_steps
+                                workflow_info["progress"]["completed"] = completed_steps
+                                workflow_info["progress"]["percentage"] = int((completed_steps / total_steps) * 100) if total_steps > 0 else 0
                             else:
                                 # Final fallback: Create generic steps based on common workflow patterns
                                 # This will show at least some workflow structure
@@ -555,14 +564,11 @@ async def get_candidate_workflow(
                                 ]
                                 
                                 total_steps = len(generic_steps)
-                                completed_steps = latest_workflow.steps_executed
-                                
-                                workflow_info["progress"]["total"] = total_steps
-                                workflow_info["progress"]["completed"] = completed_steps
-                                workflow_info["progress"]["percentage"] = int((completed_steps / total_steps) * 100) if total_steps > 0 else 0
                                 
                                 # Create generic steps array
                                 workflow_info["steps"] = []
+                                completed_steps = 0
+                                
                                 for i, step_name in enumerate(generic_steps):
                                     step_info = {
                                         "step": i + 1,
@@ -574,6 +580,11 @@ async def get_candidate_workflow(
                                         "approvers": []
                                     }
                                     workflow_info["steps"].append(step_info)
+                                
+                                # Calculate progress based on actual completed steps
+                                workflow_info["progress"]["total"] = total_steps
+                                workflow_info["progress"]["completed"] = completed_steps
+                                workflow_info["progress"]["percentage"] = int((completed_steps / total_steps) * 100) if total_steps > 0 else 0
         
         return workflow_info
         
