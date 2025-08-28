@@ -29,10 +29,23 @@ async def get_pending_approvals(
     db: AsyncSession = Depends(get_db),
     current_user: Profile = Depends(get_current_user)
 ):
-    """Get all pending approval requests for the current user"""
+    """Get all pending approval requests for the current user's company"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     try:
-        # Check if user is admin
-        is_admin = current_user.role.name == "admin"
+        # Debug logging
+        logger.info(f"🔍 [PENDING] User ID: {current_user.id}")
+        logger.info(f"🔍 [PENDING] Company ID: {current_user.company_id}")
+        logger.info(f"🔍 [PENDING] Role: {current_user.role.name if current_user.role else 'None'}")
+        
+        # Check if user is admin - be more explicit about role checking
+        is_admin = False
+        if current_user.role and current_user.role.name:
+            is_admin = current_user.role.name.lower() == "admin"
+            logger.info(f"🔍 [PENDING] Is Admin: {is_admin} (role name: {current_user.role.name})")
+        else:
+            logger.warning(f"⚠️ [PENDING] No role found for user {current_user.id}")
         
         # Build the base query
         base_query = select(
@@ -56,7 +69,8 @@ async def get_pending_approvals(
             WorkflowApproval, WorkflowApproval.approval_request_id == WorkflowApprovalRequest.id
         ).where(
             WorkflowApprovalRequest.status == 'pending',
-            WorkflowApproval.id.is_(None)  # No response yet
+            WorkflowApproval.id.is_(None),  # No response yet
+            Job.company_id == current_user.company_id  # Filter by user's company
         )
         
         # If not admin, filter to only show approvals assigned to this user
@@ -319,10 +333,24 @@ async def get_approval_history(
     limit: int = 50,
     offset: int = 0
 ):
-    """Get approval history - Admin sees all, regular users see only their own"""
+    """Get approval history - Admin sees all from their company, regular users see only their own"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     try:
-        # Check if user is admin
-        is_admin = current_user.role.name == "admin"
+        # Debug logging
+        logger.info(f"🔍 User ID: {current_user.id}")
+        logger.info(f"🔍 Company ID: {current_user.company_id}")
+        logger.info(f"🔍 Role: {current_user.role.name if current_user.role else 'None'}")
+        logger.info(f"🔍 Role ID: {current_user.role_id}")
+        
+        # Check if user is admin - be more explicit about role checking
+        is_admin = False
+        if current_user.role and current_user.role.name:
+            is_admin = current_user.role.name.lower() == "admin"
+            logger.info(f"🔍 Is Admin: {is_admin} (role name: {current_user.role.name})")
+        else:
+            logger.warning(f"⚠️ No role found for user {current_user.id}")
         
         # Build the base query
         base_query = select(
@@ -345,15 +373,20 @@ async def get_approval_history(
             Candidate, CandidateWorkflow.candidate_id == Candidate.id
         ).outerjoin(
             WorkflowApproval, WorkflowApproval.approval_request_id == WorkflowApprovalRequest.id
+        ).where(
+            Job.company_id == current_user.company_id  # Filter by user's company
         ).order_by(
             WorkflowApprovalRequest.requested_at.desc()
         ).limit(limit).offset(offset)
         
         # If not admin, filter to only show approvals assigned to this user
         if not is_admin:
+            logger.info(f"🔍 Filtering to user-specific approvals for user {current_user.id}")
             base_query = base_query.where(
                 WorkflowApprovalRequest.approver_user_id == current_user.id
             )
+        else:
+            logger.info(f"🔍 Admin user - showing all company approvals")
         
         # Execute the query
         requests_result = await db.execute(base_query)

@@ -299,10 +299,16 @@ class AuthService:
     
     async def get_current_user(self, db: AsyncSession, token: str) -> Optional[Profile]:
         """Get current user from token"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
         token_data = self.verify_token(token)
         
         if not token_data or not token_data.user_id:
+            logger.warning(f"⚠️ Invalid token data or missing user_id")
             return None
+        
+        logger.info(f"🔍 [AUTH] Looking for user with ID: {token_data.user_id}")
         
         # First try to find by Profile.id (new system)
         result = await db.execute(
@@ -316,7 +322,10 @@ class AuthService:
         profile = result.scalar_one_or_none()
         
         if profile:
+            logger.info(f"🔍 [AUTH] Found profile {profile.id} with role: {profile.role.name if profile.role else 'None'}")
             return profile
+        
+        logger.info(f"🔍 [AUTH] Profile not found, trying User table")
         
         # Fall back to old system - find by User.id
         result = await db.execute(
@@ -329,7 +338,13 @@ class AuthService:
             .where(User.id == token_data.user_id, User.is_active == True)
         )
         
-        return result.scalar_one_or_none()
+        profile = result.scalar_one_or_none()
+        if profile:
+            logger.info(f"🔍 [AUTH] Found profile via User table {profile.id} with role: {profile.role.name if profile.role else 'None'}")
+        else:
+            logger.warning(f"⚠️ [AUTH] No profile found for user_id {token_data.user_id}")
+        
+        return profile
     
     async def refresh_access_token(self, db: AsyncSession, refresh_token: str) -> AuthResponse:
         """Refresh access token"""
