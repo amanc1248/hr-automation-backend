@@ -92,6 +92,7 @@ async def get_pending_approvals(
                     # Workflow step info
                     step_name=workflow_step.name,
                     step_description=workflow_step.description,
+                    step_display_name=workflow_step.display_name,
                     step_type=workflow_step.step_type,
                     
                     # Candidate info
@@ -393,6 +394,7 @@ async def get_approval_history(
                     # Workflow step info
                     step_name=workflow_step.name,
                     step_description=workflow_step.description,
+                    step_display_name=workflow_step.display_name,
                     step_type=workflow_step.step_type,
                     
                     # Candidate info

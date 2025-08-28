@@ -46,6 +46,7 @@ class ApprovalRequestResponse(BaseModel):
     # Workflow step information
     step_name: str
     step_description: str
+    step_display_name: Optional[str] = None
     step_type: str
     
     # Candidate information
