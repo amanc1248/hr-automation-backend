@@ -40,6 +40,7 @@ async def get_workflow_steps(
             WorkflowStepResponse(
                 id=step.id,
                 name=step.name,
+                display_name=step.display_name,
                 description=step.description,
                 step_type=step.step_type,
                 actions=step.actions,
@@ -107,6 +108,7 @@ async def get_workflow_templates(
                             workflow_step=WorkflowStepResponse(
                                 id=workflow_step.id,
                                 name=workflow_step.name,
+                                display_name=workflow_step.display_name,
                                 description=workflow_step.description,
                                 step_type=workflow_step.step_type,
                                 actions=workflow_step.actions,
@@ -387,6 +389,7 @@ async def get_workflow_step(
         return WorkflowStepResponse(
             id=step.id,
             name=step.name,
+            display_name=step.display_name,
             description=step.description,
             step_type=step.step_type,
             actions=step.actions,

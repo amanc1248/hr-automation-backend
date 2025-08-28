@@ -10,7 +10,8 @@ class WorkflowStepResponse(BaseModel):
     """Response schema for workflow steps"""
     id: UUID
     name: str
-    description: Optional[str] = None
+    display_name: Optional[str] = None  # Human-readable description for UI
+    description: Optional[str] = None   # Full AI prompt for execution
     step_type: str  # automated, manual, approval
     actions: List[Dict[str, Any]] = Field(default_factory=list)
     created_at: datetime
@@ -22,7 +23,8 @@ class WorkflowStepResponse(BaseModel):
 class WorkflowStepCreate(BaseModel):
     """Schema for creating workflow steps"""
     name: str = Field(..., min_length=1, max_length=255)
-    description: Optional[str] = None
+    display_name: Optional[str] = Field(None, min_length=1, max_length=255)  # Human-readable description
+    description: Optional[str] = None  # Full AI prompt
     step_type: str = Field(..., pattern="^(automated|manual|approval)$")
     actions: List[Dict[str, Any]] = Field(default_factory=list)
 

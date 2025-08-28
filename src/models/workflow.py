@@ -23,7 +23,8 @@ class WorkflowStep(BaseModel):
     __tablename__ = "workflow_step"
     
     name = Column(Text, nullable=False)
-    description = Column(Text, nullable=True)
+    display_name = Column(Text, nullable=True)  # Human-readable description for UI
+    description = Column(Text, nullable=True)   # Full AI prompt for execution
     step_type = Column(Text, nullable=False)
     actions = Column(JSONB, nullable=False, default=list)
     is_deleted = Column(Boolean, default=False, nullable=False)
