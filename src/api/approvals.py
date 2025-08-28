@@ -31,34 +31,51 @@ async def get_pending_approvals(
 ):
     """Get all pending approval requests for the current user"""
     try:
-        # Get approval requests for this user that haven't been responded to
-        requests_result = await db.execute(
-            select(
-                WorkflowApprovalRequest,
-                WorkflowStepDetail,
-                WorkflowStep,
-                CandidateWorkflow,
-                Job,
-                Candidate
-            )
-            .join(WorkflowStepDetail, WorkflowApprovalRequest.workflow_step_detail_id == WorkflowStepDetail.id)
-            .join(WorkflowStep, WorkflowStepDetail.workflow_step_id == WorkflowStep.id)
-            .join(CandidateWorkflow, WorkflowApprovalRequest.candidate_workflow_id == CandidateWorkflow.id)
-            .join(Job, CandidateWorkflow.job_id == Job.id)
-            .join(Candidate, CandidateWorkflow.candidate_id == Candidate.id)
-            .outerjoin(WorkflowApproval, WorkflowApproval.approval_request_id == WorkflowApprovalRequest.id)
-            .where(
-                WorkflowApprovalRequest.approver_user_id == current_user.id,
-                WorkflowApprovalRequest.status == 'pending',
-                WorkflowApproval.id.is_(None)  # No response yet
-            )
+        # Check if user is admin
+        is_admin = current_user.role.name == "admin"
+        
+        # Build the base query
+        base_query = select(
+            WorkflowApprovalRequest,
+            WorkflowStepDetail,
+            WorkflowStep,
+            CandidateWorkflow,
+            Job,
+            Candidate
+        ).join(
+            WorkflowStepDetail, WorkflowApprovalRequest.workflow_step_detail_id == WorkflowStepDetail.id
+        ).join(
+            WorkflowStep, WorkflowStepDetail.workflow_step_id == WorkflowStep.id
+        ).join(
+            CandidateWorkflow, WorkflowApprovalRequest.candidate_workflow_id == CandidateWorkflow.id
+        ).join(
+            Job, CandidateWorkflow.job_id == Job.id
+        ).join(
+            Candidate, CandidateWorkflow.candidate_id == Candidate.id
+        ).outerjoin(
+            WorkflowApproval, WorkflowApproval.approval_request_id == WorkflowApprovalRequest.id
+        ).where(
+            WorkflowApprovalRequest.status == 'pending',
+            WorkflowApproval.id.is_(None)  # No response yet
         )
+        
+        # If not admin, filter to only show approvals assigned to this user
+        if not is_admin:
+            base_query = base_query.where(
+                WorkflowApprovalRequest.approver_user_id == current_user.id
+            )
+        
+        # Execute the query
+        requests_result = await db.execute(base_query)
         
         requests_data = requests_result.fetchall()
         
         approval_requests = []
         for request_data in requests_data:
             approval_request, step_detail, workflow_step, candidate_workflow, job, candidate = request_data
+            
+            # Determine if current user can approve this request
+            can_approve = approval_request.approver_user_id == current_user.id
             
             approval_requests.append(
                 ApprovalRequestResponse(
@@ -68,6 +85,9 @@ async def get_pending_approvals(
                     required_approvals=approval_request.required_approvals,
                     status=approval_request.status,
                     requested_at=approval_request.requested_at,
+                    
+                    # User permissions
+                    can_approve=can_approve,
                     
                     # Workflow step info
                     step_name=workflow_step.name,
@@ -298,30 +318,44 @@ async def get_approval_history(
     limit: int = 50,
     offset: int = 0
 ):
-    """Get approval history for the current user"""
+    """Get approval history - Admin sees all, regular users see only their own"""
     try:
-        # Get all approval requests for this user (responded and pending)
-        requests_result = await db.execute(
-            select(
-                WorkflowApprovalRequest,
-                WorkflowStepDetail,
-                WorkflowStep,
-                CandidateWorkflow,
-                Job,
-                Candidate,
-                WorkflowApproval
+        # Check if user is admin
+        is_admin = current_user.role.name == "admin"
+        
+        # Build the base query
+        base_query = select(
+            WorkflowApprovalRequest,
+            WorkflowStepDetail,
+            WorkflowStep,
+            CandidateWorkflow,
+            Job,
+            Candidate,
+            WorkflowApproval
+        ).join(
+            WorkflowStepDetail, WorkflowApprovalRequest.workflow_step_detail_id == WorkflowStepDetail.id
+        ).join(
+            WorkflowStep, WorkflowStepDetail.workflow_step_id == WorkflowStep.id
+        ).join(
+            CandidateWorkflow, WorkflowApprovalRequest.candidate_workflow_id == CandidateWorkflow.id
+        ).join(
+            Job, CandidateWorkflow.job_id == Job.id
+        ).join(
+            Candidate, CandidateWorkflow.candidate_id == Candidate.id
+        ).outerjoin(
+            WorkflowApproval, WorkflowApproval.approval_request_id == WorkflowApprovalRequest.id
+        ).order_by(
+            WorkflowApprovalRequest.requested_at.desc()
+        ).limit(limit).offset(offset)
+        
+        # If not admin, filter to only show approvals assigned to this user
+        if not is_admin:
+            base_query = base_query.where(
+                WorkflowApprovalRequest.approver_user_id == current_user.id
             )
-            .join(WorkflowStepDetail, WorkflowApprovalRequest.workflow_step_detail_id == WorkflowStepDetail.id)
-            .join(WorkflowStep, WorkflowStepDetail.workflow_step_id == WorkflowStep.id)
-            .join(CandidateWorkflow, WorkflowApprovalRequest.candidate_workflow_id == CandidateWorkflow.id)
-            .join(Job, CandidateWorkflow.job_id == Job.id)
-            .join(Candidate, CandidateWorkflow.candidate_id == Candidate.id)
-            .outerjoin(WorkflowApproval, WorkflowApproval.approval_request_id == WorkflowApprovalRequest.id)
-            .where(WorkflowApprovalRequest.approver_user_id == current_user.id)
-            .order_by(WorkflowApprovalRequest.requested_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
+        
+        # Execute the query
+        requests_result = await db.execute(base_query)
         
         requests_data = requests_result.fetchall()
         
@@ -339,6 +373,9 @@ async def get_approval_history(
                 responded_at = None
                 comments = None
             
+            # Determine if current user can approve this request
+            can_approve = approval_request.approver_user_id == current_user.id
+            
             approval_requests.append(
                 ApprovalRequestResponse(
                     id=approval_request.id,
@@ -349,6 +386,9 @@ async def get_approval_history(
                     requested_at=approval_request.requested_at,
                     responded_at=responded_at,
                     comments=comments,
+                    
+                    # User permissions
+                    can_approve=can_approve,
                     
                     # Workflow step info
                     step_name=workflow_step.name,

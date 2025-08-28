@@ -40,6 +40,9 @@ class ApprovalRequestResponse(BaseModel):
     responded_at: Optional[datetime] = None
     comments: Optional[str] = None
     
+    # User permissions
+    can_approve: bool = True  # Whether current user can approve this request
+    
     # Workflow step information
     step_name: str
     step_description: str
