@@ -134,6 +134,19 @@ class EmailWebhookProcessor:
                     'message': 'User has no valid Gmail access token'
                 }
             
+            # Step 1.5: Quick check - get basic email metadata to check if it's unread
+            basic_metadata = await self._get_basic_email_metadata(access_token, resource_id)
+            if basic_metadata:
+                label_ids = basic_metadata.get('labelIds', [])
+                if 'UNREAD' not in label_ids:
+                    logger.info(f"⏭️  [Webhook Processor] Skipping already-read email (early check): {resource_id}")
+                    return {
+                        'success': True,
+                        'message': 'Email already read - skipping processing (early check)',
+                        'action': 'skipped_read_email_early',
+                        'email_id': resource_id
+                    }
+            
             # Step 2: Fetch email content using Gmail API
             email_data = await self._fetch_email_content(access_token, resource_id)
             if not email_data:
@@ -144,10 +157,22 @@ class EmailWebhookProcessor:
                     'message': 'Failed to fetch email content from Gmail API'
                 }
             
+            # Step 2.5: Double-check if email is unread before processing (redundant safety check)
+            label_ids = email_data.get('label_ids', [])
+            if 'UNREAD' not in label_ids:
+                logger.info(f"⏭️  [Webhook Processor] Skipping already-read email: {resource_id}")
+                return {
+                    'success': True,
+                    'message': 'Email already read - skipping processing',
+                    'action': 'skipped_read_email',
+                    'email_id': resource_id
+                }
+            
             logger.info(f"✅ [Webhook Processor] Email content fetched successfully")
             logger.info(f"   📧 Subject: {email_data.get('subject', 'No subject')}")
             logger.info(f"   👤 From: {email_data.get('from', 'Unknown')}")
             logger.info(f"   📅 Date: {email_data.get('date', 'Unknown')}")
+            logger.info(f"   🏷️  Labels: {label_ids}")
             
             # Step 3: Process email through existing workflow system
             workflow_result = await self._process_email_workflow(
@@ -188,6 +213,31 @@ class EmailWebhookProcessor:
             return await gmail_watch_manager._get_user_access_token(db, user_id)
         except Exception as e:
             logger.error(f"❌ Error getting access token: {e}")
+            return None
+    
+    async def _get_basic_email_metadata(self, access_token: str, email_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetches basic email metadata (like labelIds) without fetching full content.
+        This is a quick check to see if an email is unread.
+        """
+        try:
+            import httpx
+            
+            async with httpx.AsyncClient() as client:
+                metadata_response = await client.get(
+                    f'https://gmail.googleapis.com/gmail/v1/users/me/messages/{email_id}',
+                    headers={'Authorization': f'Bearer {access_token}'},
+                    timeout=10.0 # Shorter timeout for basic metadata
+                )
+                
+                if metadata_response.status_code != 200:
+                    logger.error(f"❌ Failed to fetch basic email metadata: {metadata_response.status_code}")
+                    return None
+                
+                return metadata_response.json()
+                
+        except Exception as e:
+            logger.error(f"❌ Error fetching basic email metadata: {e}")
             return None
     
     async def _fetch_email_content(self, access_token: str, email_id: str) -> Optional[Dict[str, Any]]:
