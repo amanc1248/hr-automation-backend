@@ -21,8 +21,9 @@ async def create_all_tables():
         from models.job import Job, JobRequirement
         from models.candidate import Candidate, Application
         from models.interview import Interview, AIInterviewConfig
-        from models.workflow import WorkflowTemplate, WorkflowStep, WorkflowExecution, WorkflowStepExecution, WorkflowApproval
+        from models.workflow import WorkflowTemplate, WorkflowStep, WorkflowStepDetail, CandidateWorkflow
         from models.email import EmailAccount, EmailTemplate, EmailMonitoring
+        from models.gmail_webhook import GmailWatch, EmailProcessingLog
         
         # Create all tables
         async with engine.begin() as conn:

@@ -6,6 +6,7 @@ from .candidate import Candidate, Application
 from .interview import Interview, AIInterviewConfig
 from .workflow import WorkflowTemplate, WorkflowStep, WorkflowStepDetail, CandidateWorkflow
 from .email import EmailAccount, EmailTemplate, EmailMonitoring
+from .gmail_webhook import GmailWatch, EmailProcessingLog
 
 __all__ = [
     "Base",
@@ -14,5 +15,6 @@ __all__ = [
     "Candidate", "Application", 
     "Interview", "AIInterviewConfig",
     "WorkflowTemplate", "WorkflowStep", "WorkflowStepDetail", "CandidateWorkflow",
-    "EmailAccount", "EmailTemplate", "EmailMonitoring"
+    "EmailAccount", "EmailTemplate", "EmailMonitoring",
+    "GmailWatch", "EmailProcessingLog"
 ]
