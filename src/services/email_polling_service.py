@@ -823,6 +823,12 @@ class EmailPollingService:
                     logger.info(f"   ✅ Workflow completed - no more steps to execute")
                     break
                 
+                # Check if current step detail is already finished
+                current_step_detail_status = await self._get_step_detail_status(db, current_step_detail_id)
+                if current_step_detail_status == 'finished':
+                    logger.info(f"   ✅ Current step detail {current_step_detail_id} is already finished - workflow progression complete")
+                    break
+                
                 logger.info(f"   📋 Executing step {steps_executed}: {current_step_detail_id}")
                 
                 # Check if this step requires human approval
@@ -1874,6 +1880,30 @@ class EmailPollingService:
         except Exception as e:
             logger.error(f"   ❌ Error marking email as read: {e}")
             # Don't raise the exception - email marking is not critical to workflow execution
+
+    async def _get_step_detail_status(self, db: AsyncSession, step_detail_id: str) -> Optional[str]:
+        """Get the current status of a WorkflowStepDetail"""
+        try:
+            from sqlalchemy import select
+            from models.workflow import WorkflowStepDetail
+            
+            result = await db.execute(
+                select(WorkflowStepDetail.status).where(
+                    WorkflowStepDetail.id == step_detail_id,
+                    WorkflowStepDetail.is_deleted == False
+                )
+            )
+            
+            step_detail = result.scalar_one_or_none()
+            if step_detail:
+                return step_detail
+            else:
+                logger.warning(f"   ⚠️ Step detail {step_detail_id} not found")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error getting step detail status: {e}")
+            return None
 
 # Global instance
 email_polling_service = EmailPollingService()
