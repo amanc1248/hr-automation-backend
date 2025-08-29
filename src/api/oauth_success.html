@@ -64,19 +64,30 @@
 
         // Handle popup vs regular window
         if (window.opener) {
+            console.log('🔍 [OAuth HTML] This is a popup window, sending message to parent');
+            console.log('🔍 [OAuth HTML] URL params:', { success, email, error });
+            
             // This is a popup window - send message to parent and close
             try {
-                window.opener.postMessage({
-                    type: 'GMAIL_OAUTH_COMPLETE',
+                const message = {
+                    type: 'gmail-oauth-result',
                     success: success === 'true',
                     email: email,
                     error: error
-                }, window.location.origin);
+                };
+                
+                console.log('🔍 [OAuth HTML] Sending message to parent:', message);
+                
+                // Send message to parent window with the correct format
+                window.opener.postMessage(message, '*'); // Use '*' for cross-origin communication
+                
+                console.log('🔍 [OAuth HTML] Message sent successfully');
                 
                 // Close popup after a short delay
                 setTimeout(() => {
+                    console.log('🔍 [OAuth HTML] Closing popup');
                     window.close();
-                }, 1500);
+                }, 1000);
             } catch (e) {
                 console.error('Failed to communicate with parent window:', e);
                 // Fallback: redirect to main app

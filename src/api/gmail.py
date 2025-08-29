@@ -103,10 +103,17 @@ async def gmail_oauth_callback(
         with open(html_path, 'r') as f:
             html_content = f.read()
         
-        # Replace the redirect URL with query parameters
-        success_url = f"http://localhost:5173/email-config?success=true&email={user_info['email']}"
-        html_content = html_content.replace('/email-config', success_url)
+        # Get the frontend URL from environment or use a default
+        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+        print(f"🔍 [Backend OAuth] Frontend URL: {frontend_url}")
         
+        # Inject the success data directly into the HTML
+        html_content = html_content.replace('const success = urlParams.get(\'success\');', f'const success = \'true\';')
+        html_content = html_content.replace('const email = urlParams.get(\'email\');', f'const email = \'{user_info["email"]}\';')
+        html_content = html_content.replace('const error = urlParams.get(\'error\');', 'const error = null;')
+        
+        print(f"🔍 [Backend OAuth] Injected success=true, email={user_info['email']}")
+        print(f"🔍 [Backend OAuth] Returning HTML response with success")
         return HTMLResponse(content=html_content, status_code=200)
         
     except Exception as e:
@@ -117,14 +124,22 @@ async def gmail_oauth_callback(
         with open(html_path, 'r') as f:
             html_content = f.read()
         
+        # Get the frontend URL from environment or use a default
+        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+        print(f"🔍 [Backend OAuth] Error case - Frontend URL: {frontend_url}")
+        
         # Replace success content with error content
         html_content = html_content.replace('✅', '❌')
         html_content = html_content.replace('Gmail Connected Successfully!', 'Gmail Connection Failed')
         html_content = html_content.replace('Your Gmail account has been connected.', 'Failed to connect your Gmail account.')
         
-        error_url = f"http://localhost:5173/email-config?error=callback_failed"
-        html_content = html_content.replace('/email-config', error_url)
+        # Inject the error data directly into the HTML
+        html_content = html_content.replace('const success = urlParams.get(\'success\');', 'const success = \'false\';')
+        html_content = html_content.replace('const email = urlParams.get(\'email\');', 'const email = null;')
+        html_content = html_content.replace('const error = urlParams.get(\'error\');', 'const error = \'callback_failed\';')
         
+        print(f"🔍 [Backend OAuth] Injected success=false, error=callback_failed")
+        print(f"🔍 [Backend OAuth] Returning HTML response with error")
         return HTMLResponse(content=html_content, status_code=200)
 
 @router.get("/configs", response_model=List[dict])
