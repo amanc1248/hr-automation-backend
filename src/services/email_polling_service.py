@@ -412,28 +412,17 @@ class EmailPollingService:
             
             logger.info(f"   🔄 Found workflow template ID: {workflow_template_id}")
             
-            # 10. Check if candidate_workflow exists
-            existing_workflow = await self._find_existing_candidate_workflow(db, job['id'], candidate['id'], workflow_template_id)
-            if existing_workflow:
-                logger.info(f"   ✅ Found existing candidate workflow: {existing_workflow['id']}")
-                logger.info(f"   📋 Current step ID: {existing_workflow.get('current_step_detail_id', 'Not set')}")
+            # 10. Find or create candidate workflow (consolidated)
+            workflow = await self._find_or_create_candidate_workflow(db, job['id'], candidate['id'], workflow_template_id, email)
+            if workflow:
+                logger.info(f"   ✅ Workflow ready: {workflow['id']} (Status: {workflow['status']})")
+                logger.info(f"   📋 Current step ID: {workflow.get('current_step_detail_id', 'Not set')}")
                 
                 # Execute workflow progression (current step and potentially next steps)
-                await self._execute_workflow_progression(db, existing_workflow, candidate, job, email)
-                    
+                await self._execute_workflow_progression(db, workflow, candidate, job, email)
             else:
-                logger.info(f"   🆕 Creating new candidate workflow...")
-                # 11. Create new candidate_workflow
-                new_workflow = await self._create_candidate_workflow(db, job['id'], candidate['id'], workflow_template_id, email)
-                if new_workflow:
-                    logger.info(f"   ✅ Created new candidate workflow: {new_workflow['id']}")
-                    logger.info(f"   📋 Starting with step ID: {new_workflow.get('current_step_detail_id', 'Not set')}")
-                    
-                    # Execute workflow progression starting from first step
-                    await self._execute_workflow_progression(db, new_workflow, candidate, job, email)
-                else:
-                    logger.warning(f"   ⚠️ Failed to create candidate workflow")
-                    logger.info(f"   💡 Workflow processing stopped - candidate and application were saved successfully")
+                logger.warning(f"   ⚠️ Failed to find or create candidate workflow")
+                logger.info(f"   💡 Workflow processing stopped - candidate and application were saved successfully")
             
         except Exception as e:
             logger.error(f"Error starting workflow: {e}")
@@ -505,7 +494,7 @@ class EmailPollingService:
             import re
             
             # Extract job short ID from subject using regex pattern [JOBXXX]
-            job_id_pattern = r'\[([A-Z]{3}\w{3})\]'  # Matches [JOB123], [JOBXXX], etc.
+            job_id_pattern = r'\[([^\]]+)\]'  # Matches anything between [ and ]
             match = re.search(job_id_pattern, email_subject)
             
             if match:
@@ -603,12 +592,14 @@ class EmailPollingService:
             logger.error(f"Error getting workflow_template_id from job: {e}")
             return None
     
-    async def _find_existing_candidate_workflow(self, db: AsyncSession, job_id: str, candidate_id: str, workflow_template_id: str) -> Optional[Dict[str, Any]]:
-        """Find existing candidate workflow using job_id, candidate_id, and workflow_template_id"""
+    async def _find_or_create_candidate_workflow(self, db: AsyncSession, job_id: str, candidate_id: str, workflow_template_id: str, email: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Find existing candidate workflow OR create new one if doesn't exist"""
         try:
             from sqlalchemy import select
-            from models.workflow import CandidateWorkflow
+            from models.workflow import CandidateWorkflow, WorkflowStepDetail, WorkflowTemplate
+            from models.job import Job
             
+            # 1. Check if workflow exists
             result = await db.execute(
                 select(CandidateWorkflow).where(
                     CandidateWorkflow.job_id == job_id,
@@ -620,27 +611,36 @@ class EmailPollingService:
             existing_workflow = result.scalar_one_or_none()
             
             if existing_workflow:
-                return {
-                    "id": existing_workflow.id,
-                    "name": existing_workflow.name,
-                    "current_step_detail_id": existing_workflow.current_step_detail_id,
-                    "workflow_template_id": existing_workflow.workflow_template_id,
-                    "started_at": existing_workflow.started_at,
-                    "status": "existing"
-                }
-            else:
-                return None
+                logger.info(f"   ✅ Found existing candidate workflow: {existing_workflow.id}")
                 
-        except Exception as e:
-            logger.error(f"Error finding existing candidate workflow: {e}")
-            return None
-    
-    async def _create_candidate_workflow(self, db: AsyncSession, job_id: str, candidate_id: str, workflow_template_id: str, email: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Create new candidate workflow"""
-        try:
-            from sqlalchemy import select
-            from models.workflow import CandidateWorkflow, WorkflowStepDetail, WorkflowTemplate
-            from models.job import Job
+                # 2. Verify all required execution records exist
+                execution_records_exist = await self._verify_workflow_execution_records(db, candidate_id, job_id, workflow_template_id)
+                
+                if execution_records_exist:
+                    logger.info(f"   ✅ All execution records exist for existing workflow")
+                    return {
+                        "id": existing_workflow.id,
+                        "name": existing_workflow.name,
+                        "current_step_detail_id": existing_workflow.current_step_detail_id,
+                        "workflow_template_id": existing_workflow.workflow_template_id,
+                        "started_at": existing_workflow.started_at,
+                        "status": "existing"
+                    }
+                else:
+                    logger.info(f"   ⚠️ Missing execution records, creating them...")
+                    # 3. Create missing execution records
+                    await self._create_execution_records_for_workflow(db, candidate_id, job_id, workflow_template_id, existing_workflow.current_step_detail_id)
+                    return {
+                        "id": existing_workflow.id,
+                        "name": existing_workflow.name,
+                        "current_step_detail_id": existing_workflow.current_step_detail_id,
+                        "workflow_template_id": existing_workflow.workflow_template_id,
+                        "started_at": existing_workflow.started_at,
+                        "status": "existing_updated"
+                    }
+            
+            # 4. Create new workflow if none exists
+            logger.info(f"   🆕 Creating new candidate workflow...")
             
             # Get job details for workflow name
             job_result = await db.execute(
@@ -657,7 +657,6 @@ class EmailPollingService:
             first_step = None
             if template and template.steps_execution_id:
                 # Get the first step from the template's steps_execution_id array
-                # Find the step detail with order_number == 1 from the template's steps
                 first_step_result = await db.execute(
                     select(WorkflowStepDetail).where(
                         WorkflowStepDetail.id.in_(template.steps_execution_id),
@@ -708,11 +707,51 @@ class EmailPollingService:
                 "started_at": workflow_instance.started_at,
                 "status": "new"
             }
-            
+                
         except Exception as e:
-            logger.error(f"Error creating candidate workflow: {e}")
+            logger.error(f"Error finding/creating candidate workflow: {e}")
             await db.rollback()
             return None
+    
+    async def _verify_workflow_execution_records(self, db: AsyncSession, candidate_id: str, job_id: str, workflow_template_id: str) -> bool:
+        """Verify that all required execution records exist for a workflow"""
+        try:
+            from sqlalchemy import select, func
+            from models.workflow import WorkflowTemplate, WorkflowStepDetail
+            from models.candidate_workflow_execution import CandidateWorkflowExecution
+            
+            # Get the workflow template to access steps_execution_id
+            template_result = await db.execute(
+                select(WorkflowTemplate).where(WorkflowTemplate.id == workflow_template_id)
+            )
+            template = template_result.scalar_one_or_none()
+            
+            if not template or not template.steps_execution_id:
+                logger.warning(f"   ⚠️ No workflow template or steps found for template: {workflow_template_id}")
+                return False
+            
+            # Count total steps in template
+            total_steps = len(template.steps_execution_id)
+            
+            # Count existing execution records for this candidate-job combination
+            execution_count_result = await db.execute(
+                select(func.count(CandidateWorkflowExecution.id)).where(
+                    CandidateWorkflowExecution.candidate_id == candidate_id,
+                    CandidateWorkflowExecution.job_id == job_id,
+                    CandidateWorkflowExecution.is_deleted == False
+                )
+            )
+            existing_executions = execution_count_result.scalar_one_or_none() or 0
+            
+            logger.info(f"   📊 Execution records check: {existing_executions}/{total_steps} found")
+            
+            return existing_executions >= total_steps
+            
+        except Exception as e:
+            logger.error(f"Error verifying workflow execution records: {e}")
+            return False
+    
+    
     
     async def _find_or_create_candidate(self, db: AsyncSession, candidate_info: Dict[str, Any], company_id: str) -> Optional[Dict[str, Any]]:
         """Find existing candidate or create a new one"""
@@ -883,10 +922,7 @@ class EmailPollingService:
                 # Update execution log
                 await self._update_workflow_execution_log(db, current_workflow['id'], step_result, current_step_detail_id)
                 
-                # Update WorkflowStepDetail status based on step result
-                await self._update_step_detail_status(db, current_step_detail_id, step_status)
-                
-                # Update execution record in candidate_workflow_executions table
+                # Update execution record in candidate_workflow_executions table (replaces global status update)
                 execution_update_result = await self._create_or_update_step_execution(
                     db,
                     candidate['id'],
@@ -1758,9 +1794,22 @@ class EmailPollingService:
             
             await db.execute(update_query)
             
-            # Update the current step detail status to finished
+            # Update the current step execution status to finished (replaces global status update)
             if current_step_detail_id:
-                await self._update_step_detail_status(db, str(current_step_detail_id), 'finished')
+                # We need candidate_id and job_id here - let me get them from the workflow
+                workflow_result = await db.execute(
+                    select(CandidateWorkflow.candidate_id, CandidateWorkflow.job_id).where(
+                        CandidateWorkflow.id == workflow_id
+                    )
+                )
+                workflow_data = workflow_result.fetchone()
+                if workflow_data:
+                    candidate_id, job_id = workflow_data
+                    await self._create_or_update_step_execution(
+                        db, candidate_id, job_id, current_step_detail_id, 
+                        status='finished', 
+                        metadata={"workflow_completed": True, "completed_at": datetime.utcnow().isoformat()}
+                    )
             
             await db.commit()
             
@@ -1812,9 +1861,22 @@ class EmailPollingService:
             
             await db.execute(update_query)
             
-            # Update the current step detail status to rejected
+            # Update the current step execution status to rejected (replaces global status update)
             if current_step_detail_id:
-                await self._update_step_detail_status(db, str(current_step_detail_id), 'rejected')
+                # We need candidate_id and job_id here - let me get them from the workflow
+                workflow_result = await db.execute(
+                    select(CandidateWorkflow.candidate_id, CandidateWorkflow.job_id).where(
+                        CandidateWorkflow.id == workflow_id
+                    )
+                )
+                workflow_data = workflow_result.fetchone()
+                if workflow_data:
+                    candidate_id, job_id = workflow_data
+                    await self._create_or_update_step_execution(
+                        db, candidate_id, job_id, current_step_detail_id, 
+                        status='rejected', 
+                        metadata={"workflow_rejected": True, "rejection_reason": rejection_reason, "completed_at": datetime.utcnow().isoformat()}
+                    )
             
             await db.commit()
             
@@ -1825,42 +1887,7 @@ class EmailPollingService:
             logger.error(f"Error marking workflow as rejected: {e}")
             await db.rollback()
     
-    async def _update_step_detail_status(self, db: AsyncSession, step_detail_id: str, step_status: str):
-        """Update WorkflowStepDetail status based on step execution result"""
-        try:
-            from sqlalchemy import update
-            from models.workflow import WorkflowStepDetail
-            from datetime import datetime
-            
-            # Map step status to WorkflowStepDetail status
-            status_mapping = {
-                'approved': 'finished',  # Step completed successfully
-                'rejected': 'rejected',  # Step was rejected
-                'pending': 'awaiting',   # Step is waiting
-                'completed': 'finished', # Step completed
-                'success': 'finished',   # Step succeeded
-                'failed': 'rejected'     # Step failed
-            }
-            
-            # Get the mapped status, default to 'awaiting' if unknown
-            mapped_status = status_mapping.get(step_status, 'awaiting')
-            
-            # Update the WorkflowStepDetail status
-            update_query = update(WorkflowStepDetail).where(
-                WorkflowStepDetail.id == step_detail_id
-            ).values(
-                status=mapped_status,
-                updated_at=datetime.utcnow()
-            )
-            
-            await db.execute(update_query)
-            await db.commit()
-            
-            logger.info(f"   📝 Updated WorkflowStepDetail {step_detail_id} status to: {mapped_status}")
-            
-        except Exception as e:
-            logger.error(f"Error updating WorkflowStepDetail status: {e}")
-            await db.rollback()
+
             
     async def _update_tokens_in_db(self, config_id: str, new_tokens: Dict[str, Any]):
         """Update tokens in the database after refresh"""
@@ -2022,6 +2049,20 @@ class EmailPollingService:
             from models.candidate_workflow_execution import CandidateWorkflowExecution
             from datetime import datetime
             
+            # Map status to execution status for consistency
+            status_mapping = {
+                'approved': 'finished',      # Step completed successfully
+                'rejected': 'rejected',      # Step was rejected
+                'pending': 'pending',        # Step is waiting
+                'completed': 'finished',     # Step completed
+                'success': 'finished',       # Step succeeded
+                'failed': 'failed'           # Step failed
+            }
+            
+            # Get the mapped execution status
+            execution_status = status_mapping.get(status, status)
+            logger.info(f"   🔄 Mapping status '{status}' to execution status '{execution_status}'")
+            
             # Check if execution record already exists
             result = await db.execute(
                 select(CandidateWorkflowExecution).where(
@@ -2036,9 +2077,9 @@ class EmailPollingService:
             
             if execution:
                 # Update existing record
-                execution.execution_status = status
+                execution.execution_status = execution_status
                 execution.updated_at = datetime.utcnow()
-                if status in ['finished', 'failed', 'rejected']:
+                if execution_status in ['finished', 'failed', 'rejected']:  # Now using execution_status
                     execution.completed_at = datetime.utcnow()
                 if metadata:
                     execution.step_metadata = metadata
@@ -2049,7 +2090,7 @@ class EmailPollingService:
                     candidate_id=candidate_id,
                     job_id=job_id,
                     workflow_step_detail_id=step_detail_id,
-                    execution_status=status,
+                    execution_status=execution_status,  # Now using execution_status
                     started_at=datetime.utcnow(),
                     current_step=True,
                     step_metadata=metadata or {}
@@ -2058,7 +2099,7 @@ class EmailPollingService:
                 logger.info(f"   📝 Created new execution record for step {step_detail_id}")
             
             # Mark other steps as not current
-            if status in ['finished', 'failed', 'rejected']:
+            if execution_status in ['finished', 'failed', 'rejected']:  # Now using execution_status
                 await db.execute(
                     select(CandidateWorkflowExecution).where(
                         CandidateWorkflowExecution.candidate_id == candidate_id,
@@ -2095,11 +2136,17 @@ class EmailPollingService:
             )
             template = template_result.scalar_one_or_none()
             
+            logger.info(f"   🔍 Template found: {template.id if template else 'None'}")
+            logger.info(f"   🔍 Template steps_execution_id: {template.steps_execution_id if template else 'None'}")
+            
             if not template or not template.steps_execution_id:
                 logger.warning(f"   ⚠️ No workflow template or steps found for template: {workflow_template_id}")
                 return False
             
-            # Get all step details for this template
+            # Get all step details for this template with eager loading
+            logger.info(f"   🔍 Template steps_execution_id: {template.steps_execution_id}")
+            logger.info(f"   🔍 Template has {len(template.steps_execution_id)} steps")
+            
             steps_result = await db.execute(
                 select(WorkflowStepDetail).where(
                     WorkflowStepDetail.id.in_(template.steps_execution_id),
@@ -2108,36 +2155,57 @@ class EmailPollingService:
             )
             steps = steps_result.scalars().all()
             
+            logger.info(f"   🔍 Found {len(steps)} step details in database")
+            
             if not steps:
                 logger.warning(f"   ⚠️ No steps found for workflow template: {workflow_template_id}")
                 return False
             
             # Create execution records for all steps
             execution_records = []
-            for step in steps:
-                execution_record = CandidateWorkflowExecution(
-                    candidate_id=candidate_id,
-                    job_id=job_id,
-                    workflow_step_detail_id=step.id,
-                    execution_status="pending",
-                    started_at=datetime.utcnow(),
-                    current_step=(step.id == first_step_detail_id),  # Only first step is current
-                    step_metadata={
-                        "step_name": step.workflow_step.name if step.workflow_step else "Unknown",
-                        "order_number": step.order_number,
-                        "auto_start": step.auto_start,
-                        "required_human_approval": step.required_human_approval,
-                        "workflow_initiation": True
-                    }
-                )
-                execution_records.append(execution_record)
+            logger.info(f"   🔍 Creating execution records for {len(steps)} steps...")
+            
+            for i, step in enumerate(steps):
+                # Use only direct attributes to avoid async relationship loading issues
+                logger.info(f"   📋 Step {i+1}: {step.id}")
+                logger.info(f"   📋 Step details: order={step.order_number}, auto_start={step.auto_start}, approval={step.required_human_approval}")
+                
+                try:
+                    execution_record = CandidateWorkflowExecution(
+                        candidate_id=candidate_id,
+                        job_id=job_id,
+                        workflow_step_detail_id=step.id,
+                        execution_status="pending",
+                        started_at=datetime.utcnow(),
+                        current_step=(step.id == first_step_detail_id)  # Only first step is current
+                        # No step_metadata - keeping it simple!
+                    )
+                    execution_records.append(execution_record)
+                    logger.info(f"   ✅ Prepared execution record for step {step.id}")
+                except Exception as step_error:
+                    logger.error(f"   ❌ Error creating execution record for step {step.id}: {step_error}")
+                    raise step_error
             
             # Add all records to database
-            db.add_all(execution_records)
-            await db.flush()
+            logger.info(f"   💾 Adding {len(execution_records)} execution records to database...")
+            logger.info(f"   💾 Execution records to add: {[f'{r.candidate_id}-{r.job_id}-{r.workflow_step_detail_id}' for r in execution_records]}")
             
-            logger.info(f"   📝 Created {len(execution_records)} execution records for workflow")
-            return True
+            try:
+                db.add_all(execution_records)
+                logger.info(f"   ✅ Added all records to session")
+                
+                await db.flush()
+                logger.info(f"   ✅ Flushed records to database")
+                
+                await db.commit()
+                logger.info(f"   ✅ Committed transaction")
+                
+                logger.info(f"   📝 Successfully created {len(execution_records)} execution records for workflow")
+                return True
+            except Exception as db_error:
+                logger.error(f"   ❌ Database error: {db_error}")
+                await db.rollback()
+                raise db_error
             
         except Exception as e:
             logger.error(f"Error creating execution records for workflow: {e}")
