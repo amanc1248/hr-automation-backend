@@ -6,6 +6,7 @@ Clear Candidate Data Script
 This script clears data from specific candidate-related tables:
 - applications
 - candidate_workflow  
+- candidate_workflow_executions
 - candidates
 
 PRESERVES everything else including:
@@ -36,6 +37,7 @@ CANDIDATE_TABLES = [
     "workflow_approval_requests", # Approval requests sent to approvers
     "applications",               # Candidate job applications
     "candidate_workflow",         # Workflow instances for candidates
+    "candidate_workflow_executions", # Step execution records for candidates
     "candidates"                  # Candidate records
 ]
 
@@ -114,8 +116,8 @@ async def clear_candidate_data():
             total_deleted = 0
             
             # Clear tables in order (respecting foreign key dependencies)
-            # workflow_approvals first, then workflow_approval_requests, then applications, candidate_workflow, candidates
-            ordered_tables = ["workflow_approvals", "workflow_approval_requests", "applications", "candidate_workflow", "candidates"]
+            # workflow_approvals first, then workflow_approval_requests, then applications, candidate_workflow_executions, candidate_workflow, candidates
+            ordered_tables = ["workflow_approvals", "workflow_approval_requests", "applications", "candidate_workflow_executions", "candidate_workflow", "candidates"]
             
             for table_name in ordered_tables:
                 if table_name in CANDIDATE_TABLES and table_counts.get(table_name, 0) > 0:

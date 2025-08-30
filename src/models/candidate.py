@@ -53,6 +53,7 @@ class Candidate(BaseModelWithSoftDelete):
     applications = relationship("Application", back_populates="candidate", cascade="all, delete-orphan")
     interviews = relationship("Interview", back_populates="candidate", cascade="all, delete-orphan")
     candidate_workflows = relationship("CandidateWorkflow", back_populates="candidate", cascade="all, delete-orphan")
+    workflow_executions = relationship("CandidateWorkflowExecution", back_populates="candidate", cascade="all, delete-orphan")
 
 class Application(BaseModel):
     """Job application model"""

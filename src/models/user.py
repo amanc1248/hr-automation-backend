@@ -6,6 +6,7 @@ from datetime import datetime
 
 # Import for relationship references
 from .approval import WorkflowApprovalRequest
+from .email import EmailAccount
 
 class Company(BaseModel):
     """Company model"""
@@ -80,6 +81,8 @@ class Profile(BaseModel):
     # Gmail webhook relationships
     gmail_watches = relationship("GmailWatch", back_populates="user", cascade="all, delete-orphan")
     email_processing_logs = relationship("EmailProcessingLog", back_populates="user", cascade="all, delete-orphan")
+    
+
 
 class User(BaseModel):
     """User model for authentication (if not using Supabase auth)"""
