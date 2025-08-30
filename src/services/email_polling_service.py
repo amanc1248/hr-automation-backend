@@ -2042,12 +2042,45 @@ class EmailPollingService:
             logger.error(f"Error getting candidate step execution status: {e}")
             return None
 
+    def _sanitize_metadata_for_json(self, metadata: dict) -> dict:
+        """Convert metadata to JSON-serializable format by converting UUIDs to strings"""
+        from datetime import datetime, date
+        
+        if not metadata:
+            return {}
+        
+        def convert_value(value):
+            if isinstance(value, dict):
+                return {k: convert_value(v) for k, v in value.items()}
+            elif isinstance(value, list):
+                return [convert_value(v) for v in value]
+            elif hasattr(value, 'hex'):  # UUID objects have hex method
+                return str(value)
+            elif isinstance(value, (datetime, date)):
+                return value.isoformat()
+            else:
+                return value
+        
+        return convert_value(metadata)
+    
     async def _create_or_update_step_execution(self, db: AsyncSession, candidate_id: str, job_id: str, step_detail_id: str, status: str, metadata: dict = None):
         """Create or update a step execution record for a specific candidate-job combination"""
         try:
             from sqlalchemy import select
             from models.candidate_workflow_execution import CandidateWorkflowExecution
-            from datetime import datetime
+            from datetime import datetime, date
+            
+            logger.info(f"   🔍 _create_or_update_step_execution called with:")
+            logger.info(f"   🔍 candidate_id: {candidate_id}")
+            logger.info(f"   🔍 job_id: {job_id}")
+            logger.info(f"   🔍 step_detail_id: {step_detail_id}")
+            logger.info(f"   🔍 status: {status}")
+            logger.info(f"   🔍 metadata: {metadata}")
+            
+            # Sanitize metadata to ensure JSON serialization
+            if metadata:
+                metadata = self._sanitize_metadata_for_json(metadata)
+                logger.info(f"   🔧 Sanitized metadata: {metadata}")
             
             # Map status to execution status for consistency
             status_mapping = {
@@ -2064,6 +2097,7 @@ class EmailPollingService:
             logger.info(f"   🔄 Mapping status '{status}' to execution status '{execution_status}'")
             
             # Check if execution record already exists
+            logger.info(f"   🔍 Checking for existing execution record...")
             result = await db.execute(
                 select(CandidateWorkflowExecution).where(
                     CandidateWorkflowExecution.candidate_id == candidate_id,
@@ -2074,33 +2108,51 @@ class EmailPollingService:
             )
             
             execution = result.scalar_one_or_none()
+            logger.info(f"   🔍 Existing execution record found: {execution is not None}")
             
             if execution:
                 # Update existing record
-                execution.execution_status = execution_status
-                execution.updated_at = datetime.utcnow()
-                if execution_status in ['finished', 'failed', 'rejected']:  # Now using execution_status
-                    execution.completed_at = datetime.utcnow()
-                if metadata:
-                    execution.step_metadata = metadata
-                logger.info(f"   📝 Updated execution record for step {step_detail_id}")
+                logger.info(f"   📝 Updating existing execution record...")
+                logger.info(f"   🔍 Execution record ID: {execution.id}")
+                logger.info(f"   🔍 Current execution_status: {execution.execution_status}")
+                logger.info(f"   🔍 New execution_status: {execution_status}")
+                
+                try:
+                    execution.execution_status = execution_status
+                    execution.updated_at = datetime.utcnow()
+                    if execution_status in ['finished', 'failed', 'rejected']:
+                        execution.completed_at = datetime.utcnow()
+                        logger.info(f"   ✅ Set completed_at for finished status")
+                    if metadata:
+                        execution.step_metadata = metadata
+                        logger.info(f"   ✅ Updated metadata")
+                    logger.info(f"   📝 Updated execution record for step {step_detail_id}")
+                except Exception as update_error:
+                    logger.error(f"   ❌ Error updating execution record: {update_error}")
+                    raise update_error
             else:
                 # Create new record
-                execution = CandidateWorkflowExecution(
-                    candidate_id=candidate_id,
-                    job_id=job_id,
-                    workflow_step_detail_id=step_detail_id,
-                    execution_status=execution_status,  # Now using execution_status
-                    started_at=datetime.utcnow(),
-                    current_step=True,
-                    step_metadata=metadata or {}
-                )
-                db.add(execution)
-                logger.info(f"   📝 Created new execution record for step {step_detail_id}")
+                logger.info(f"   📝 Creating new execution record...")
+                try:
+                    execution = CandidateWorkflowExecution(
+                        candidate_id=candidate_id,
+                        job_id=job_id,
+                        workflow_step_detail_id=step_detail_id,
+                        execution_status=execution_status,
+                        started_at=datetime.utcnow(),
+                        current_step=True,
+                        step_metadata=metadata or {}
+                    )
+                    db.add(execution)
+                    logger.info(f"   📝 Created new execution record for step {step_detail_id}")
+                except Exception as create_error:
+                    logger.error(f"   ❌ Error creating execution record: {create_error}")
+                    raise create_error
             
             # Mark other steps as not current
-            if execution_status in ['finished', 'failed', 'rejected']:  # Now using execution_status
-                await db.execute(
+            if execution_status in ['finished', 'failed', 'rejected']:
+                logger.info(f"   🔄 Marking other steps as not current...")
+                other_result = await db.execute(
                     select(CandidateWorkflowExecution).where(
                         CandidateWorkflowExecution.candidate_id == candidate_id,
                         CandidateWorkflowExecution.job_id == job_id,
@@ -2108,17 +2160,26 @@ class EmailPollingService:
                         CandidateWorkflowExecution.is_deleted == False
                     )
                 )
-                other_executions = result.scalars().all()
+                other_executions = other_result.scalars().all()
+                logger.info(f"   🔍 Found {len(other_executions)} other current steps")
+                
                 for other_exec in other_executions:
                     if other_exec.id != execution.id:
                         other_exec.current_step = False
                         other_exec.updated_at = datetime.utcnow()
+                        logger.info(f"   📝 Marked step {other_exec.id} as not current")
             
+            logger.info(f"   💾 Committing changes to database...")
             await db.commit()
+            logger.info(f"   ✅ Successfully committed execution record")
             return execution
             
         except Exception as e:
             logger.error(f"Error creating/updating step execution: {e}")
+            logger.error(f"Error type: {type(e).__name__}")
+            logger.error(f"Error details: {str(e)}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             await db.rollback()
             return None
 
