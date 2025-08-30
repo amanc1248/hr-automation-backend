@@ -2,6 +2,7 @@ from sqlalchemy import Column, String, Boolean, Text, ForeignKey, DateTime, Inte
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from .base import BaseModel, BaseModelWithSoftDelete
+from .interview import Interview
 
 class Job(BaseModel):
     """Job posting model"""
@@ -51,6 +52,7 @@ class Job(BaseModel):
     interviews = relationship("Interview", back_populates="job", cascade="all, delete-orphan")
     requirements_list = relationship("JobRequirement", back_populates="job", cascade="all, delete-orphan")
     candidate_workflows = relationship("CandidateWorkflow", back_populates="job", cascade="all, delete-orphan")
+    workflow_executions = relationship("CandidateWorkflowExecution", back_populates="job", cascade="all, delete-orphan")
 
 class JobRequirement(BaseModel):
     """Job requirements model"""

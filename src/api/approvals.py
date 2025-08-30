@@ -156,11 +156,18 @@ async def submit_approval_response(
         
         # Check if user has already responded
         existing_response_result = await db.execute(
-            select(WorkflowApproval).where(
+            select(
+                WorkflowApproval.id,
+                WorkflowApproval.approval_request_id,
+                WorkflowApproval.decision,
+                WorkflowApproval.comments,
+                WorkflowApproval.responded_at,
+                WorkflowApproval.created_at
+            ).where(
                 WorkflowApproval.approval_request_id == approval_request.id
             )
         )
-        existing_response = existing_response_result.scalar_one_or_none()
+        existing_response = existing_response_result.fetchone()
         
         if existing_response:
             raise HTTPException(
@@ -227,13 +234,20 @@ async def _check_and_continue_workflow(db: AsyncSession, approval_request: Workf
         
         logger.info(f"   📊 Found {len(all_requests)} total approval requests for this step")
         
-        # Get all responses (approvals) for these requests
+        # Get all responses (approvals) for these requests with explicit column selection
         approval_responses_result = await db.execute(
-            select(WorkflowApproval).where(
+            select(
+                WorkflowApproval.id,
+                WorkflowApproval.approval_request_id,
+                WorkflowApproval.decision,
+                WorkflowApproval.comments,
+                WorkflowApproval.responded_at,
+                WorkflowApproval.created_at
+            ).where(
                 WorkflowApproval.approval_request_id.in_([req.id for req in all_requests])
             )
         )
-        approval_responses = approval_responses_result.scalars().all()
+        approval_responses = approval_responses_result.fetchall()
         
         logger.info(f"   📝 Found {len(approval_responses)} responses from approvers")
         
@@ -352,15 +366,126 @@ async def get_approval_history(
         else:
             logger.warning(f"⚠️ No role found for user {current_user.id}")
         
-        # Build the base query
+        # Build the base query with explicit column selection to avoid missing column errors
         base_query = select(
-            WorkflowApprovalRequest,
-            WorkflowStepDetail,
-            WorkflowStep,
-            CandidateWorkflow,
-            Job,
-            Candidate,
-            WorkflowApproval
+            WorkflowApprovalRequest.id,
+            WorkflowApprovalRequest.candidate_workflow_id,
+            WorkflowApprovalRequest.workflow_step_detail_id,
+            WorkflowApprovalRequest.approver_user_id,
+            WorkflowApprovalRequest.required_approvals,
+            WorkflowApprovalRequest.status,
+            WorkflowApprovalRequest.requested_at,
+            WorkflowApprovalRequest.completed_at,
+            WorkflowApprovalRequest.created_at,
+            WorkflowApprovalRequest.updated_at,
+            
+            # WorkflowStepDetail columns
+            WorkflowStepDetail.workflow_step_id,
+            WorkflowStepDetail.delay_in_seconds,
+            WorkflowStepDetail.auto_start,
+            WorkflowStepDetail.required_human_approval,
+            WorkflowStepDetail.number_of_approvals_needed,
+            WorkflowStepDetail.approvers,
+            WorkflowStepDetail.status.label('step_detail_status'),
+            WorkflowStepDetail.order_number,
+            WorkflowStepDetail.is_deleted,
+            WorkflowStepDetail.id.label('step_detail_id'),
+            WorkflowStepDetail.created_at.label('step_detail_created_at'),
+            WorkflowStepDetail.updated_at.label('step_detail_updated_at'),
+            
+            # WorkflowStep columns
+            WorkflowStep.name,
+            WorkflowStep.display_name,
+            WorkflowStep.description,
+            WorkflowStep.step_type,
+            WorkflowStep.actions,
+            WorkflowStep.is_deleted.label('step_is_deleted'),
+            WorkflowStep.id.label('step_id'),
+            WorkflowStep.created_at.label('step_created_at'),
+            WorkflowStep.updated_at.label('step_updated_at'),
+            
+            # CandidateWorkflow columns
+            CandidateWorkflow.name.label('workflow_name'),
+            CandidateWorkflow.description.label('workflow_description'),
+            CandidateWorkflow.category,
+            CandidateWorkflow.job_id,
+            CandidateWorkflow.workflow_template_id,
+            CandidateWorkflow.candidate_id,
+            CandidateWorkflow.current_step_detail_id,
+            CandidateWorkflow.started_at,
+            CandidateWorkflow.completed_at.label('workflow_completed_at'),
+            CandidateWorkflow.execution_log,
+            CandidateWorkflow.steps_executed,
+            CandidateWorkflow.workflow_completed,
+            CandidateWorkflow.is_deleted.label('workflow_is_deleted'),
+            CandidateWorkflow.id.label('workflow_id'),
+            CandidateWorkflow.created_at.label('workflow_created_at'),
+            CandidateWorkflow.updated_at.label('workflow_updated_at'),
+            
+            # Job columns
+            Job.title,
+            Job.short_id,
+            Job.description.label('job_description'),
+            Job.requirements,
+            Job.requirements_structured,
+            Job.department,
+            Job.location,
+            Job.job_type,
+            Job.experience_level,
+            Job.remote_policy,
+            Job.salary_min,
+            Job.salary_max,
+            Job.salary_currency,
+            Job.status.label('job_status'),
+            Job.workflow_template_id.label('job_workflow_template_id'),
+            Job.company_id,
+            Job.created_by,
+            Job.assigned_to,
+            Job.posted_at,
+            Job.expires_at,
+            Job.is_featured,
+            Job.external_postings,
+            Job.id.label('job_id'),
+            Job.created_at.label('job_created_at'),
+            Job.updated_at.label('job_updated_at'),
+            
+            # Candidate columns
+            Candidate.first_name,
+            Candidate.last_name,
+            Candidate.email,
+            Candidate.phone,
+            Candidate.location.label('candidate_location'),
+            Candidate.timezone,
+            Candidate.current_title,
+            Candidate.current_company,
+            Candidate.experience_years,
+            Candidate.resume_url,
+            Candidate.resume_text,
+            Candidate.portfolio_url,
+            Candidate.linkedin_url,
+            Candidate.github_url,
+            Candidate.skills,
+            Candidate.preferences,
+            Candidate.ai_summary,
+            Candidate.ai_skills_extracted,
+            Candidate.ai_experience_analysis,
+            Candidate.source,
+            Candidate.source_details,
+            Candidate.company_id.label('candidate_company_id'),
+            Candidate.status.label('candidate_status'),
+            Candidate.id.label('candidate_id'),
+            Candidate.created_at.label('candidate_created_at'),
+            Candidate.updated_at.label('candidate_updated_at'),
+            Candidate.is_deleted.label('candidate_is_deleted'),
+            Candidate.deleted_at,
+            
+            # WorkflowApproval columns (only existing ones)
+            WorkflowApproval.id.label('approval_id'),
+            WorkflowApproval.approval_request_id,
+            WorkflowApproval.decision,
+            WorkflowApproval.comments,
+            WorkflowApproval.responded_at,
+            WorkflowApproval.created_at.label('approval_created_at')
         ).join(
             WorkflowStepDetail, WorkflowApprovalRequest.workflow_step_detail_id == WorkflowStepDetail.id
         ).join(
@@ -395,55 +520,83 @@ async def get_approval_history(
         
         approval_requests = []
         for request_data in requests_data:
-            approval_request, step_detail, workflow_step, candidate_workflow, job, candidate, approval_response = request_data
+            # Unpack the explicit column selection
+            (approval_request_id, candidate_workflow_id, workflow_step_detail_id, approver_user_id, 
+             required_approvals, status, requested_at, completed_at, created_at, updated_at,
+             # Step detail columns
+             step_workflow_step_id, delay_in_seconds, auto_start, required_human_approval, 
+             number_of_approvals_needed, approvers, step_detail_status, order_number, 
+             step_detail_is_deleted, step_detail_id, step_detail_created_at, step_detail_updated_at,
+             # Step columns
+             step_name, step_display_name, step_description, step_type, step_actions, 
+             step_is_deleted, step_id, step_created_at, step_updated_at,
+             # Workflow columns
+             workflow_name, workflow_description, workflow_category, job_id, workflow_template_id, 
+             candidate_id, current_step_detail_id, started_at, workflow_completed_at, execution_log, 
+             steps_executed, workflow_completed, workflow_is_deleted, workflow_id, workflow_created_at, workflow_updated_at,
+             # Job columns
+             job_title, job_short_id, job_description, job_requirements, job_requirements_structured, 
+             job_department, job_location, job_type, experience_level, remote_policy, salary_min, 
+             salary_max, salary_currency, job_status, job_workflow_template_id, job_company_id, 
+             created_by, assigned_to, posted_at, expires_at, is_featured, external_postings, 
+             job_id_val, job_created_at, job_updated_at,
+             # Candidate columns
+             first_name, last_name, email, phone, candidate_location, timezone, current_title, 
+             current_company, experience_years, resume_url, resume_text, portfolio_url, linkedin_url, 
+             github_url, skills, preferences, ai_summary, ai_skills_extracted, ai_experience_analysis, 
+             source, source_details, candidate_company_id, candidate_status, candidate_id_val, 
+             candidate_created_at, candidate_updated_at, candidate_is_deleted, deleted_at,
+             # Approval columns
+             approval_id, approval_request_id_val, decision, comments, responded_at, approval_created_at) = request_data
             
             # Determine status based on response
-            if approval_response:
-                status = approval_response.decision
-                responded_at = approval_response.responded_at
-                comments = approval_response.comments
+            if approval_id:  # If there's an approval response
+                approval_status = decision
+                approval_responded_at = responded_at
+                approval_comments = comments
             else:
-                status = "pending"
-                responded_at = None
-                comments = None
+                approval_status = "pending"
+                approval_responded_at = None
+                approval_comments = None
             
             # Determine if current user can approve this request
-            can_approve = approval_request.approver_user_id == current_user.id
+            can_approve = approver_user_id == current_user.id
             
             approval_requests.append(
                 ApprovalRequestResponse(
-                    id=approval_request.id,
-                    candidate_workflow_id=approval_request.candidate_workflow_id,
-                    workflow_step_detail_id=approval_request.workflow_step_detail_id,
-                    required_approvals=approval_request.required_approvals,
-                    status=status,
-                    requested_at=approval_request.requested_at,
-                    responded_at=responded_at,
-                    comments=comments,
+                    id=approval_request_id,
+                    candidate_workflow_id=candidate_workflow_id,
+                    workflow_step_detail_id=workflow_step_detail_id,
+                    required_approvals=required_approvals,
+                    status=approval_status,
+                    requested_at=requested_at,
+                    responded_at=approval_responded_at,
+                    comments=approval_comments,
                     
                     # User permissions
                     can_approve=can_approve,
                     
                     # Workflow step info
-                    step_name=workflow_step.name,
-                    step_description=workflow_step.description,
-                    step_display_name=workflow_step.display_name,
-                    step_type=workflow_step.step_type,
+                    step_name=step_name,
+                    step_description=step_description,
+                    step_display_name=step_display_name,
+                    step_type=step_type,
                     
                     # Candidate info
-                    candidate_name=f"{candidate.first_name} {candidate.last_name}",
-                    candidate_email=candidate.email,
+                    candidate_name=f"{first_name} {last_name}",
+                    candidate_email=email,
                     
                     # Job info
-                    job_title=job.title,
-                    job_department=job.department,
+                    job_title=job_title,
+                    job_department=job_department,
                 )
             )
         
         return approval_requests
         
     except Exception as e:
+        logger.error(f"❌ Error fetching approval history: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=500,
             detail=f"Failed to fetch approval history: {str(e)}"
         )

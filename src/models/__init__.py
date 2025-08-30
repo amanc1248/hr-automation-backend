@@ -1,18 +1,24 @@
 # Database Models
-from .base import Base
-from .user import User, Company, Profile, UserRole, UserInvitation
-from .job import Job, JobRequirement
-from .candidate import Candidate, Application
-from .interview import Interview, AIInterviewConfig
+from .base import BaseModel
+from .user import Profile, UserRole, Company
+from .gmail_webhook import GmailWatch, EmailProcessingLog
+from .job import Job
 from .workflow import WorkflowTemplate, WorkflowStep, WorkflowStepDetail, CandidateWorkflow
-from .email import EmailAccount, EmailTemplate, EmailMonitoring
+from .approval import WorkflowApprovalRequest
+from .candidate_workflow_execution import CandidateWorkflowExecution
 
 __all__ = [
-    "Base",
-    "User", "Company", "Profile", "UserRole", "UserInvitation",
-    "Job", "JobRequirement",
-    "Candidate", "Application", 
-    "Interview", "AIInterviewConfig",
-    "WorkflowTemplate", "WorkflowStep", "WorkflowStepDetail", "CandidateWorkflow",
-    "EmailAccount", "EmailTemplate", "EmailMonitoring"
+    "BaseModel",
+    "Profile", 
+    "UserRole", 
+    "Company", 
+    "GmailWatch",
+    "EmailProcessingLog",
+    "Job",
+    "WorkflowTemplate",
+    "WorkflowStep", 
+    "WorkflowStepDetail", 
+    "CandidateWorkflow",
+    "WorkflowApprovalRequest",
+    "CandidateWorkflowExecution"
 ]

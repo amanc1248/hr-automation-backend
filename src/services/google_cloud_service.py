@@ -6,6 +6,7 @@ import httpx
 from google.cloud import pubsub_v1
 from google.auth import default
 from google.auth.exceptions import DefaultCredentialsError
+from google.api_core.exceptions import AlreadyExists, NotFound
 
 from core.config import settings
 
@@ -18,7 +19,7 @@ class GoogleCloudService:
         self.project_id = getattr(settings, 'GOOGLE_CLOUD_PROJECT_ID', None)
         self.topic_name = getattr(settings, 'GMAIL_PUBSUB_TOPIC', 'gmail-notifications')
         self.subscription_name = getattr(settings, 'GMAIL_PUBSUB_SUBSCRIPTION', 'gmail-notifications-sub')
-        self.webhook_url = getattr(settings, 'GMAIL_WEBHOOK_URL', 'http://localhost:8000/api/emails/webhook')
+        self.webhook_url = getattr(settings, 'GMAIL_WEBHOOK_URL', 'http://localhost:8000/api/gmail/webhook')
 
         # Initialize Pub/Sub client
         self.publisher = None
@@ -47,29 +48,38 @@ class GoogleCloudService:
             logger.error(f"❌ Failed to initialize Google Cloud clients: {e}")
 
     async def create_gmail_watch(self, email_address: str, access_token: str) -> Dict[str, Any]:
-        """Create a Gmail watch request for push notifications"""
+        """Create a Gmail watch request for Pub/Sub webhook notifications"""
         try:
-            if not self.project_id:
+            if not self.project_id or not self.publisher:
+                logger.error("❌ Pub/Sub not properly configured")
                 return {
                     'success': False,
                     'error': 'CONFIGURATION_ERROR',
-                    'message': 'Google Cloud project ID not configured',
-                    'details': 'Set GOOGLE_CLOUD_PROJECT_ID in environment variables'
+                    'message': 'Google Cloud Pub/Sub not configured properly'
                 }
 
-            # Ensure topic and subscription exist
+            # Create topic path - Gmail requires this exact format
             topic_path = self.publisher.topic_path(self.project_id, self.topic_name)
-            await self._ensure_topic_exists(topic_path)
-            await self._ensure_subscription_exists(topic_path)
+            
+            logger.info(f"📡 Setting up Gmail watch for {email_address}")
+            logger.info(f"📡 Using topic: {topic_path}")
 
-            # Create Gmail watch request
+            # Step 1: Ensure topic and subscription exist
+            setup_result = await self._setup_pubsub_infrastructure(topic_path)
+            if not setup_result['success']:
+                return setup_result
+
+            # Step 2: Grant Gmail permissions to publish to topic
+            permissions_result = await self._grant_gmail_permissions(topic_path)
+            if not permissions_result['success']:
+                logger.warning("⚠️  Could not verify Gmail permissions, but continuing...")
+
+            # Step 3: Create Gmail watch with proper topicName
             watch_request = {
-                'topicName': topic_path,
-                'labelIds': ['INBOX'],  # Watch inbox messages
+                'topicName': topic_path,  # THIS IS REQUIRED - was commented out before
+                'labelIds': ['INBOX'],    # Watch inbox messages
                 'labelFilterAction': 'include'
             }
-
-            logger.info(f"📡 Setting up Gmail watch for {email_address}")
 
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -84,33 +94,51 @@ class GoogleCloudService:
 
                 if response.status_code == 200:
                     result = response.json()
+                    expiration_ms = result.get('expiration', '0')
+                    expiration_date = datetime.fromtimestamp(int(expiration_ms) / 1000) if expiration_ms != '0' else None
+                    
                     logger.info(f"✅ Gmail watch created successfully for {email_address}")
-                    logger.info(f"   📅 Expires: {result.get('expiration', 'Unknown')}")
+                    logger.info(f"   📅 Expires: {expiration_date}")
+                    logger.info(f"   📡 Topic: {topic_path}")
 
                     return {
                         'success': True,
                         'message': f'Gmail watch created for {email_address}',
-                        'data': result
+                        'data': result,
+                        'topic': topic_path,
+                        'expiration': expiration_date
                     }
                 elif response.status_code == 403:
                     error_data = response.json() if response.content else {}
                     error_message = error_data.get('error', {}).get('message', 'Permission denied')
+                    
+                    logger.error(f"❌ Gmail API 403 Error for {email_address}:")
+                    logger.error(f"   Error: {error_message}")
+                    logger.error(f"   Topic: {topic_path}")
 
                     return {
                         'success': False,
                         'error': 'PERMISSION_DENIED',
-                        'message': 'Permission denied when creating Gmail watch',
+                        'message': 'Permission denied - check OAuth scopes and Pub/Sub permissions',
                         'details': error_message,
-                        'solution': 'Ensure the service account has proper Pub/Sub permissions'
+                        'solutions': [
+                            'Verify Gmail OAuth scopes include gmail.readonly and gmail.modify',
+                            'Grant gmail-api-push@system.gserviceaccount.com Publisher role on topic',
+                            'Check that topic exists and is accessible'
+                        ]
                     }
                 elif response.status_code == 400:
                     error_data = response.json() if response.content else {}
                     error_message = error_data.get('error', {}).get('message', 'Bad request')
 
+                    logger.error(f"❌ Gmail API 400 Error for {email_address}:")
+                    logger.error(f"   Error: {error_message}")
+                    logger.error(f"   Topic: {topic_path}")
+
                     return {
                         'success': False,
                         'error': 'API_ERROR',
-                        'message': 'Gmail API error',
+                        'message': 'Gmail API error - Bad request',
                         'details': error_message
                     }
                 else:
@@ -131,6 +159,27 @@ class GoogleCloudService:
                 'details': str(e)
             }
 
+    async def _setup_pubsub_infrastructure(self, topic_path: str) -> Dict[str, Any]:
+        """Set up topic and subscription for Gmail webhooks"""
+        try:
+            # Step 1: Ensure topic exists
+            await self._ensure_topic_exists(topic_path)
+            
+            # Step 2: Ensure subscription exists
+            await self._ensure_subscription_exists(topic_path)
+            
+            logger.info("✅ Pub/Sub infrastructure ready")
+            return {'success': True}
+            
+        except Exception as e:
+            logger.error(f"❌ Error setting up Pub/Sub infrastructure: {e}")
+            return {
+                'success': False,
+                'error': 'PUBSUB_SETUP_ERROR',
+                'message': 'Failed to set up Pub/Sub infrastructure',
+                'details': str(e)
+            }
+
     async def _ensure_topic_exists(self, topic_path: str):
         """Ensure the Pub/Sub topic exists, create if it doesn't"""
         try:
@@ -140,12 +189,14 @@ class GoogleCloudService:
             # Check if topic exists
             try:
                 self.publisher.get_topic(request={"topic": topic_path})
-                logger.debug(f"📡 Topic already exists: {topic_path}")
-            except Exception:
+                logger.info(f"📡 Topic already exists: {topic_path}")
+            except NotFound:
                 # Topic doesn't exist, create it
                 logger.info(f"📡 Creating Pub/Sub topic: {topic_path}")
                 self.publisher.create_topic(request={"name": topic_path})
                 logger.info(f"✅ Topic created: {topic_path}")
+            except AlreadyExists:
+                logger.info(f"📡 Topic already exists: {topic_path}")
 
         except Exception as e:
             logger.error(f"❌ Error ensuring topic exists: {e}")
@@ -164,8 +215,8 @@ class GoogleCloudService:
             # Check if subscription exists
             try:
                 self.subscriber.get_subscription(request={"subscription": subscription_path})
-                logger.debug(f"📡 Subscription already exists: {subscription_path}")
-            except Exception:
+                logger.info(f"📡 Subscription already exists: {subscription_path}")
+            except NotFound:
                 # Subscription doesn't exist, create it
                 logger.info(f"📡 Creating Pub/Sub subscription: {subscription_path}")
 
@@ -181,10 +232,71 @@ class GoogleCloudService:
                     }
                 )
                 logger.info(f"✅ Subscription created: {subscription_path}")
+                logger.info(f"   🎯 Webhook endpoint: {self.webhook_url}")
+            except AlreadyExists:
+                logger.info(f"📡 Subscription already exists: {subscription_path}")
 
         except Exception as e:
             logger.error(f"❌ Error ensuring subscription exists: {e}")
             raise
+
+    async def _grant_gmail_permissions(self, topic_path: str) -> Dict[str, Any]:
+        """Grant Gmail service account permissions to publish to the topic"""
+        try:
+            # Gmail service account that needs Publisher permissions
+            gmail_service_account = "gmail-api-push@system.gserviceaccount.com"
+            
+            logger.info(f"🔐 Granting Gmail permissions on topic: {topic_path}")
+            
+            # Get current IAM policy
+            get_policy_request = pubsub_v1.GetIamPolicyRequest(resource=topic_path)
+            policy = self.publisher.get_iam_policy(request=get_policy_request)
+            
+            # Check if Gmail service account already has Publisher role
+            publisher_role = "roles/pubsub.publisher"
+            gmail_member = f"serviceAccount:{gmail_service_account}"
+            
+            # Find or create the Publisher binding
+            publisher_binding = None
+            for binding in policy.bindings:
+                if binding.role == publisher_role:
+                    publisher_binding = binding
+                    break
+            
+            if not publisher_binding:
+                # Create new binding
+                publisher_binding = pubsub_v1.Binding(
+                    role=publisher_role,
+                    members=[gmail_member]
+                )
+                policy.bindings.append(publisher_binding)
+                logger.info(f"📝 Created new Publisher binding for Gmail service account")
+            elif gmail_member not in publisher_binding.members:
+                # Add Gmail service account to existing binding
+                publisher_binding.members.append(gmail_member)
+                logger.info(f"📝 Added Gmail service account to existing Publisher binding")
+            else:
+                logger.info(f"✅ Gmail service account already has Publisher permissions")
+                return {'success': True}
+            
+            # Set the updated policy
+            set_policy_request = pubsub_v1.SetIamPolicyRequest(
+                resource=topic_path,
+                policy=policy
+            )
+            self.publisher.set_iam_policy(request=set_policy_request)
+            
+            logger.info(f"✅ Gmail permissions granted successfully")
+            return {'success': True}
+            
+        except Exception as e:
+            logger.error(f"❌ Error granting Gmail permissions: {e}")
+            return {
+                'success': False,
+                'error': 'PERMISSION_ERROR',
+                'message': 'Failed to grant Gmail permissions',
+                'details': str(e)
+            }
 
     async def publish_test_message(self) -> bool:
         """Publish a test message to verify Pub/Sub setup"""
@@ -195,8 +307,10 @@ class GoogleCloudService:
 
             topic_path = self.publisher.topic_path(self.project_id, self.topic_name)
 
-            # Ensure topic exists
-            await self._ensure_topic_exists(topic_path)
+            # Ensure topic and subscription exist
+            setup_result = await self._setup_pubsub_infrastructure(topic_path)
+            if not setup_result['success']:
+                return False
 
             # Create test message
             test_message = {
@@ -255,6 +369,112 @@ class GoogleCloudService:
             return {
                 'success': False,
                 'error': 'Internal error when stopping Gmail watch',
+                'details': str(e)
+            }
+
+    async def verify_pubsub_setup(self) -> Dict[str, Any]:
+        """Verify that Pub/Sub is properly set up for Gmail webhooks"""
+        try:
+            if not self.project_id or not self.publisher or not self.subscriber:
+                return {
+                    'success': False,
+                    'error': 'Pub/Sub not initialized',
+                    'checks': {
+                        'project_id': bool(self.project_id),
+                        'publisher': bool(self.publisher),
+                        'subscriber': bool(self.subscriber)
+                    }
+                }
+
+            topic_path = self.publisher.topic_path(self.project_id, self.topic_name)
+            subscription_path = self.subscriber.subscription_path(self.project_id, self.subscription_name)
+
+            checks = {
+                'project_configured': bool(self.project_id),
+                'clients_initialized': bool(self.publisher and self.subscriber),
+                'topic_exists': False,
+                'subscription_exists': False,
+                'gmail_permissions': False
+            }
+
+            # Check topic exists
+            try:
+                self.publisher.get_topic(request={"topic": topic_path})
+                checks['topic_exists'] = True
+                logger.info(f"✅ Topic exists: {topic_path}")
+            except NotFound:
+                logger.warning(f"⚠️  Topic does not exist: {topic_path}")
+            except Exception as e:
+                logger.error(f"❌ Error checking topic: {e}")
+
+            # Check subscription exists
+            try:
+                subscription = self.subscriber.get_subscription(request={"subscription": subscription_path})
+                checks['subscription_exists'] = True
+                logger.info(f"✅ Subscription exists: {subscription_path}")
+                logger.info(f"   🎯 Webhook endpoint: {subscription.push_config.push_endpoint}")
+            except NotFound:
+                logger.warning(f"⚠️  Subscription does not exist: {subscription_path}")
+            except Exception as e:
+                logger.error(f"❌ Error checking subscription: {e}")
+
+            # Check Gmail permissions (basic check)
+            try:
+                get_policy_request = pubsub_v1.GetIamPolicyRequest(resource=topic_path)
+                policy = self.publisher.get_iam_policy(request=get_policy_request)
+                
+                gmail_service_account = "gmail-api-push@system.gserviceaccount.com"
+                publisher_role = "roles/pubsub.publisher"
+                gmail_member = f"serviceAccount:{gmail_service_account}"
+                
+                for binding in policy.bindings:
+                    if binding.role == publisher_role and gmail_member in binding.members:
+                        checks['gmail_permissions'] = True
+                        logger.info("✅ Gmail service account has Publisher permissions")
+                        break
+                
+                if not checks['gmail_permissions']:
+                    logger.warning("⚠️  Gmail service account may not have Publisher permissions")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error checking Gmail permissions: {e}")
+
+            all_good = all(checks.values())
+            
+            return {
+                'success': all_good,
+                'message': 'Pub/Sub setup verification complete' if all_good else 'Pub/Sub setup has issues',
+                'checks': checks,
+                'topic_path': topic_path,
+                'subscription_path': subscription_path,
+                'webhook_url': self.webhook_url
+            }
+
+        except Exception as e:
+            logger.error(f"❌ Error verifying Pub/Sub setup: {e}")
+            return {
+                'success': False,
+                'error': 'VERIFICATION_ERROR',
+                'message': 'Error during Pub/Sub verification',
+                'details': str(e)
+            }
+
+    async def _setup_pubsub_infrastructure(self, topic_path: str) -> Dict[str, Any]:
+        """Set up both topic and subscription"""
+        try:
+            # Create topic
+            await self._ensure_topic_exists(topic_path)
+            
+            # Create subscription  
+            await self._ensure_subscription_exists(topic_path)
+            
+            return {'success': True}
+            
+        except Exception as e:
+            logger.error(f"❌ Error setting up Pub/Sub infrastructure: {e}")
+            return {
+                'success': False,
+                'error': 'SETUP_ERROR',
                 'details': str(e)
             }
 

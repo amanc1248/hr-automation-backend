@@ -5,7 +5,7 @@ from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, Uniq
 from sqlalchemy.dialects.postgresql import UUID, ENUM, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from models.base import Base
+from .base import BaseModel, UUIDMixin, Base
 import uuid
 
 # ENUM types for approval system
@@ -21,7 +21,7 @@ approval_decision_enum = ENUM(
     create_type=False
 )
 
-class WorkflowApprovalRequest(Base):
+class WorkflowApprovalRequest(BaseModel):
     """
     Represents an approval request sent to a specific approver for a workflow step.
     Each approver gets their own approval request record.
@@ -79,14 +79,12 @@ class WorkflowApprovalRequest(Base):
         return f"<WorkflowApprovalRequest(id={self.id}, approver={self.approver_user_id}, status={self.status})>"
 
 
-class WorkflowApproval(Base):
+class WorkflowApproval(Base, UUIDMixin):
     """
     Represents an individual approver's decision/response to an approval request.
     """
     __tablename__ = "workflow_approvals"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    
     # Foreign Keys
     approval_request_id = Column(
         UUID(as_uuid=True), 

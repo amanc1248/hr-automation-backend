@@ -16,13 +16,16 @@ async def create_all_tables():
     
     try:
         # Import all models to ensure they're registered
-        from models.base import Base
-        from models.user import User, Company, Profile, UserRole, UserInvitation
-        from models.job import Job, JobRequirement
-        from models.candidate import Candidate, Application
-        from models.interview import Interview, AIInterviewConfig
-        from models.workflow import WorkflowTemplate, WorkflowStep, WorkflowExecution, WorkflowStepExecution, WorkflowApproval
-        from models.email import EmailAccount, EmailTemplate, EmailMonitoring
+        from src.models.base import BaseModel
+        from src.models.user import Profile, UserRole, Company
+        from src.models.gmail_webhook import GmailWatch, EmailProcessingLog
+        from src.models.job import Job
+        from src.models.workflow import WorkflowTemplate, WorkflowStep, WorkflowStepDetail, CandidateWorkflow
+        from src.models.approval import WorkflowApprovalRequest
+        from src.models.candidate_workflow_execution import CandidateWorkflowExecution
+        from src.models.candidate import Candidate, Application
+        from src.models.interview import Interview, AIInterviewConfig
+        from src.models.email import EmailAccount, EmailTemplate, EmailMonitoring
         
         # Create all tables
         async with engine.begin() as conn:
@@ -31,7 +34,7 @@ async def create_all_tables():
             await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "pgcrypto"'))
             
             # Create all tables
-            await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(BaseModel.metadata.create_all)
             
         print("✅ All database tables created successfully!")
         return True
@@ -48,10 +51,10 @@ async def drop_all_tables():
     print("⚠️  Dropping all database tables...")
     
     try:
-        from models.base import Base
+        from src.models.base import BaseModel
         
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(BaseModel.metadata.drop_all)
             
         print("✅ All database tables dropped!")
         return True
@@ -68,7 +71,7 @@ async def init_default_data():
     try:
         async with AsyncSessionLocal() as session:
             # Check if user roles exist
-            from models.user import UserRole
+            from src.models.user import UserRole
             
             existing_roles = await session.execute(
                 text("SELECT COUNT(*) FROM user_roles")
@@ -130,7 +133,7 @@ async def init_default_data():
                 print(f"✅ Created {len(default_roles)} default user roles")
             
             # Check if email templates exist
-            from models.email import EmailTemplate
+            from src.models.email import EmailTemplate
             
             existing_templates = await session.execute(
                 text("SELECT COUNT(*) FROM email_templates WHERE is_system_template = true")

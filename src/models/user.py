@@ -4,6 +4,10 @@ from sqlalchemy.orm import relationship
 from .base import BaseModel, BaseModelWithSoftDelete
 from datetime import datetime
 
+# Import for relationship references
+from .approval import WorkflowApprovalRequest
+from .email import EmailAccount
+
 class Company(BaseModel):
     """Company model"""
     __tablename__ = "companies"
@@ -73,6 +77,12 @@ class Profile(BaseModel):
     created_jobs = relationship("Job", foreign_keys="Job.created_by", back_populates="creator")
     assigned_jobs = relationship("Job", foreign_keys="Job.assigned_to", back_populates="assignee")
     approval_requests = relationship("WorkflowApprovalRequest", foreign_keys="WorkflowApprovalRequest.approver_user_id", back_populates="approver")
+    
+    # Gmail webhook relationships
+    gmail_watches = relationship("GmailWatch", back_populates="user", cascade="all, delete-orphan")
+    email_processing_logs = relationship("EmailProcessingLog", back_populates="user", cascade="all, delete-orphan")
+    
+
 
 class User(BaseModel):
     """User model for authentication (if not using Supabase auth)"""
